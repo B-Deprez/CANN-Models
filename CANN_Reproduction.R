@@ -35,11 +35,13 @@ LogExpo <- layer_input(shape = c(1), dtype = 'float32', name = 'LogVol')
 
 Network <- Design %>%
   layer_dense(units = 100, activation = "tanh", name = 'hidden1') %>%
-  layer_dense(units = 100, activation = "tanh", name = 'hidden1') %>%
-  layer_dense(units = 50, activation = "tanh", name = 'hidden2') %>%
-  layer_dense(units = 25, activation = "tanh", name = 'hidden3') %>%
+  layer_dense(units = 100, activation = "tanh", name = 'hidden2') %>%
+  layer_dense(units = 50, activation = "tanh", name = 'hidden3') %>%
+  layer_dense(units = 25, activation = "tanh", name = 'hidden4') %>%
   layer_dense(units = 1, activation = "linear", name = "Network")
 
+#First you add the two via layer_add
+#Then you want an output. Here the second weight is 0 since you want no bias term
 Response <- list(Network, LogExpo) %>%
   layer_add(name = 'Add') %>%
   layer_dense(units = 1, activation = k_exp, name = 'Response', trainable = FALSE,
@@ -58,9 +60,56 @@ fit_2 <- model_2 %>% fit(list(Xfeat, Xexpo), Ylearn,
                          epochs = 10, 
                          batch_size = 1718,
                          validation_split = 0.2)
+fit_2$metrics$loss[10]
 
 #Embedding for factor variables
 non_cat <- c(5, 7:9)
 n0 <- length(non_cat)
 
 Xlearn <- as.matrix(mtpl_be[,non_cat])
+CovLearn <- as.matrix(as.integer(mtpl_be$coverage))
+NCov <- length(unique(CovLearn))
+SexLearn <- as.matrix(as.integer(mtpl_be$sex))
+NSex <- length(unique(SexLearn))
+FuelLearn <- as.matrix(as.integer(mtpl_be$fuel))
+NFuel <- length(unique(FuelLearn))
+UseLearn <- as.matrix(as.integer(mtpl_be$use))
+NUse <- length(unique(UseLearn))
+FleetLearn <- as.matrix(as.integer(mtpl_be$fleet))
+NFleet <- length(unique(FleetLearn))
+PcLearn <- as.matrix(as.integer(mtpl_be$postcode))
+NPc <- length(unique(PcLearn))
+
+Design <- layer_input(shape = c(n0), dtype = 'float32', name = 'Design')
+
+Coverage <- layer_input(shape = c(1), dtype = 'int32', name = 'Coverage')
+Sex <- layer_input(shape = c(1), dtype = 'int32', name = 'Sex')
+Fuel <- layer_input(shape = c(1), dtype = 'int32', name = 'Fuel')
+Usage <- layer_input(shape = c(1), dtype = 'int32', name = 'Usage')
+Fleet <- layer_input(shape = c(1), dtype = 'int32', name = 'Fleet')
+PostalCode <- layer_input(shape = c(1), dtype = 'int32', name = 'PostalCode')
+
+CovEmb = Coverage %>%
+  layer_embedding(input_dim = NCov, output_dim = 2, input_length = 1, name = "CovEmb") %>%
+  layer_flatten(name = "Cov_flat") 
+
+SexEmb = Sex %>%
+  layer_embedding(input_dim = NSex, output_dim = 2, input_length = 1, name = "SexEmb") %>%
+  layer_flatten(name = "Sex_flat") 
+
+FuelEmb = Fuel %>%
+  layer_embedding(input_dim = NFuel, output_dim = 2, input_length = 1, name = "FuelEmb") %>%
+  layer_flatten(name = "Fuel_flat") 
+
+UsageEmb = Usage %>%
+  layer_embedding(input_dim = NUse, output_dim = 2, input_length = 1, name = "UsageEmb") %>%
+  layer_flatten(name = "Usage_flat") 
+
+FleetEmb = Fleet %>%
+  layer_embedding(input_dim = NFleet, output_dim = 2, input_length = 1, name = "FleetEmb") %>%
+  layer_flatten(name = "Fleet_flat") 
+
+PcEmb = PostalCode %>%
+  layer_embedding(input_dim = NPc, output_dim = 2, input_length = 1, name = "PcEmb") %>%
+  layer_flatten(name = "Pc_flat") 
+
