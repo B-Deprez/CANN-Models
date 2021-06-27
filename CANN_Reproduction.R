@@ -11,6 +11,9 @@ data('mtpl_be')
 str(mtpl_be)
 summary(mtpl_be)
 
+#### Poisson Deviance
+Poisson.Deviance <- function(pred, obs){200*(sum(pred)-sum(obs)+sum(log((obs/pred)^(obs))))/length(pred)}
+
 #### First classical actuarial models ####
 #GLM
 model_1 <- glm(nclaims ~ coverage + ageph + sex + bm + power + agec +
@@ -19,6 +22,8 @@ model_1 <- glm(nclaims ~ coverage + ageph + sex + bm + power + agec +
                data = mtpl_be, 
                offset = log(expo))
 summary(model_1)
+
+Poisson.Deviance(fitted(model_1), mtpl_be$nclaims)
 
 #### Neural Network ####
 #One-hot encoding for factors
@@ -61,6 +66,9 @@ fit_2 <- model_2 %>% fit(list(Xfeat, Xexpo), Ylearn,
                          batch_size = 1718,
                          validation_split = 0.2)
 fit_2$metrics$loss[10]
+
+y_fit <- model_2 %>% predict(list(Xfeat, Xexpo))
+Poisson.Deviance(y_fit, mtpl_be$nclaims)
 
 #Embedding for factor variables
 non_cat <- c(5, 7:9)
@@ -145,3 +153,31 @@ fit_3 <- model_3 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, F
                          batch_size = 1718,
                          validation_split = 0.2)
 fit_3$metrics$loss[10]
+
+y_fit <- model_3 %>% predict(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn))
+Poisson.Deviance(y_fit, mtpl_be$nclaims)
+
+#Yes, we CANN
+Vlearn <- as.matrix(log(fitted(model_1)))
+LogGLM <- layer_input(shape = c(1),   dtype = 'float32', name = 'LogGLM')
+
+Response <- list(Network, LogGLM) %>% layer_add(name='Add') %>% 
+  layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
+              weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
+
+model_4 <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGLM),
+                       outputs = c(Response))
+
+model_4 %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
+
+fit_4 <- model_4 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
+                         Ylearn, 
+                         epochs = 100, 
+                         batch_size = 1718,
+                         validation_split = 0.2, 
+                         verbose = 0)
+fit_4$metrics$loss[100]
+plot(fit_4)
+
+y_fit <- model_4 %>% predict(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn))
+Poisson.Deviance(y_fit, mtpl_be$nclaims)
