@@ -21,6 +21,9 @@ postal_codes <- read_excel("inspost.xls")
 belgium_shape_sf <- st_read('./shape file Belgie postcodes/npc96_region_Project1.shp', quiet = TRUE)
 belgium_shape_sf <- st_transform(belgium_shape_sf, CRS("+proj=longlat +datum=WGS84"))
 
+# Poisson Deviance for comparison
+Poisson.Deviance <- function(pred, obs){200*(sum(pred)-sum(obs)+sum(log((obs/pred)^(obs))))/length(pred)}
+
 #### Fist small analysis why CANN, and not just NN ####
 ### Age
 #GLM
@@ -30,6 +33,7 @@ GAM_age <- gam(nclaims ~ s(ageph) + offset(log(expo)),
 plot(GAM_age)
 
 #NN
+set.seed(42)
 Design <- layer_input(shape = c(1), dtype = "float32", name = "Design")
 LogExpo <- layer_input(shape = c(1), dtype = "float32", name = "LogExpo")
 
@@ -60,13 +64,14 @@ fit_nn_age <- NN_age %>% fit(list(Xfeat, Xexpo), Ylearn,
 
 fit_nn_age$metrics$loss[10]
 #CANN
+set.seed(42)
 Vlearn <- as.matrix(log(fitted(GAM_age)))
 LogGAM <- layer_input(shape = c(1),   dtype = 'float32', name = 'LogGLM')
 
 Design2 <- layer_input(shape = c(1), dtype = "float32", name = "Design2")
 
 Network2 <- Design2 %>%
-  layer_batch_normalization(input_shape = c(1)) %>%
+  layer_batch_normalization() %>%
   layer_dense(units = 5, activation = 'tanh', name = 'hidden1') %>%
   layer_dense(units = 5, activation = 'tanh', name = 'hidden2') %>%
   layer_dense(units = 1, activation = 'linear', name = 'Network2')
@@ -83,7 +88,7 @@ CANN_age %>% compile(optimizer = optimizer_adam(),
                      loss = "poisson")
 
 fit_CANN_age <- CANN_age%>% fit(list(Xfeat, Vlearn), Ylearn, 
-                                epochs = 10, 
+                                epochs = 25, 
                                 batch_size = 1718,
                                 validation_split = 0.2)
 
@@ -108,4 +113,17 @@ ggplot(Comparison, aes(x = Age)) +
   ggtitle("Difference between GAM and Neural Network")+
   theme_bw()
 
+#PD
+y_test_GAM <- GAM_age %>% predict(newdata = mtpl_be, type = "response")
+
+y_test_NN <- NN_age %>% predict(list(mtpl_be$ageph, log(mtpl_be$expo)))
+
+y_test_CANN <- CANN_age %>% predict(list(mtpl_be$ageph, log(y_test_GAM)))
+
+Poisson.Deviance(y_test_GAM, mtpl_be$nclaims)
+Poisson.Deviance(y_test_NN, mtpl_be$nclaims)
+Poisson.Deviance(y_test_CANN, mtpl_be$nclaims)
+#The GAM actually performed a bit better
+
 #### Full modelling of frequency ####
+str(mtpl_be)
