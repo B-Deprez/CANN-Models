@@ -32,7 +32,7 @@ Design <- layer_input(shape = c(1), dtype = "float32", name = "Design")
 LogExpo <- layer_input(shape = c(1), dtype = "float32", name = "LogExpo")
 
 Network <- Design %>%
-  layer_batch_normalization() %>%
+  layer_batch_normalization(input_shape = c(1)) %>%
   layer_dense(units = 5, activation = 'tanh', name = 'hidden1') %>%
   layer_dense(units = 5, activation = 'tanh', name = 'hidden2') %>%
   layer_dense(units = 1, activation = 'linear', name = 'Network')
@@ -59,17 +59,21 @@ fit_nn_age <- NN_age %>% fit(list(Xfeat, Xexpo), Ylearn,
 fit_nn_age$metrics$loss[10]
 
 #Compare GAM and NN
-
 XTest <- min(mtpl_be$ageph):max(mtpl_be$ageph)
 ExpoTest <- rep(1, length(XTest))
-y_fit_NN <- NN_age %>% predict(list(XTest, ExpoTest))
+
+y_fit_NN <- predict(NN_age, list(XTest, log(ExpoTest)))
 
 y_fit_GAM <- predict(GAM_age, newdata = data.frame(ageph = XTest, expo = 1), 
-                     type = "response", se.fit = TRUE)
+                     type = "response")
 
-Comparison <- tibble(Age = XTest, GAM = y_fit_GAM$fit, NN = y_fit_NN)
+Comparison <- tibble(Age = XTest, GAM = y_fit_GAM, NN = y_fit_NN)
 
 ggplot(Comparison, aes(x = Age)) +
   geom_line(aes(y= GAM), color = "blue") +
   geom_line(aes(y= NN), color = "red") +
+  ylab("Response") +
+  ggtitle("Difference between GAM and Neural Network")+
   theme_bw()
+
+
