@@ -76,4 +76,4 @@ ggplot(Comparison, aes(x = Age)) +
   ggtitle("Difference between GAM and Neural Network")+
   theme_bw()
 
-
+#### Full modelling of frequency ####
