@@ -110,7 +110,7 @@ ggplot(Comparison, aes(x = Age)) +
   geom_line(aes(y= NN), color = "red") +
   geom_line(aes(y= CANN), color = "darkgreen")+
   ylab("Response") +
-  ggtitle("Difference between GAM and Neural Network")+
+  ggtitle("Difference between GAM, Neural Network and CANN")+
   theme_bw()
 
 #PD
@@ -127,3 +127,27 @@ Poisson.Deviance(y_test_CANN, mtpl_be$nclaims)
 
 #### Full modelling of frequency ####
 str(mtpl_be)
+
+## Plotting frequency for Belgium
+post_claim <- mtpl_be %>% group_by(postcode) %>% summarize(num = n(), 
+                                                            mean_claim = mean(nclaims))
+belgium_shape_sf_grouped <- belgium_shape_sf %>% 
+  mutate(codpos = as.factor(floor(POSTCODE/100))) %>%
+  group_by(codpos) %>%
+  summarise(geometry = st_union(geometry),
+            Shape_Area = sum(Shape_Area)) %>%
+  left_join(post_claim, 
+            by = c("codpos" = "postcode"))
+
+belgium_shape_sf_grouped$freq <- 
+  belgium_shape_sf_grouped$mean_claim/belgium_shape_sf_grouped$Shape_Area
+belgium_shape_sf_grouped$freq_class <- cut(belgium_shape_sf_grouped$freq, 
+                                   breaks = quantile(belgium_shape_sf_grouped$freq, c(0,0.20, 0.4,0.6,0.8,1), na.rm = TRUE),
+                                   right = FALSE, include.lowest = TRUE, 
+                                   labels = c("low", "average-low", "average", "average-high", "high"))
+map_freq <- ggplot(belgium_shape_sf_grouped) +
+  geom_sf(aes(fill = freq_class), size = 0) +
+  ggtitle("Claim frequency data") +
+  scale_fill_brewer(palette = "Blues", na.value = "white") + 
+  labs(fill = "Relative\nclaim fequency") +
+  theme_bw();map_freq
