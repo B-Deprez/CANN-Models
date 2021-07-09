@@ -172,11 +172,14 @@ map_freq <- ggplot(belgium_shape_sf_grouped) +
 
 ## Train-test split
 source('./stratify_train_test.R')
+stratified_train_test_split <- stratify_train_test(mtpl_be, c("nclaims"))
+mtpl_train <- stratified_train_test_split[[1]]
+mtpl_test <- stratified_train_test_split[[2]]
 
 ## GAM
 GAM_full <- gam(nclaims ~ coverage + s(ageph) + sex + s(bm) + s(power) + 
                   s(agec) + fuel + use + fleet + postcode, 
-                data = mtpl_be, 
+                data = mtpl_train, 
                 offset = expo, 
                 family = poisson(link = "log"))
 
