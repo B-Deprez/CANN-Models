@@ -22,7 +22,7 @@ belgium_shape_sf <- st_read('./shape file Belgie postcodes/npc96_region_Project1
 belgium_shape_sf <- st_transform(belgium_shape_sf, CRS("+proj=longlat +datum=WGS84"))
 
 # Poisson Deviance for comparison
-Poisson.Deviance <- function(pred, obs){2*(sum(pred)-sum(obs)+sum(log((obs/pred)^(obs))))/length(pred)}
+Poisson.Deviance <- function(pred, obs){200*(sum(pred)-sum(obs)+sum(log((obs/pred)^(obs))))/length(pred)}
 
 #### Fist small analysis why CANN, and not just NN ####
 ### Age
