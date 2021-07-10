@@ -187,3 +187,111 @@ par(mfrow = c(2,2))
 plot(GAM_full, scale = 0)
 
 ## CANN
+# We use embeddings for the factor varaibles
+non_cat <- c(5, 7:9)
+n0 <- length(non_cat)
+
+Xlearn <- as.matrix(mtpl_train[,non_cat])
+Vlearn <- as.matrix(predict(GAM_full) + log(mtpl_train$expo))
+
+CovLearn <- as.matrix(as.integer(mtpl_train$coverage))-1
+NCov <- length(unique(CovLearn))
+SexLearn <- as.matrix(as.integer(mtpl_train$sex))-1
+NSex <- length(unique(SexLearn))
+FuelLearn <- as.matrix(as.integer(mtpl_train$fuel))-1
+NFuel <- length(unique(FuelLearn))
+UseLearn <- as.matrix(as.integer(mtpl_train$use))-1
+NUse <- length(unique(UseLearn))
+FleetLearn <- as.matrix(as.integer(mtpl_train$fleet))-1
+NFleet <- length(unique(FleetLearn))
+PcLearn <- as.matrix(as.integer(mtpl_train$postcode))-1
+NPc <- length(unique(PcLearn))
+
+XTest <- as.matrix(mtpl_test[,non_cat])
+VTest <- as.matrix(predict(GAM_full, newdata = mtpl_test) + log(mtpl_test$expo))
+
+CovTest <- as.matrix(as.integer(mtpl_test$coverage))-1
+SexTest <- as.matrix(as.integer(mtpl_test$sex))-1
+FuelTest <- as.matrix(as.integer(mtpl_test$fuel))-1
+UseTest <- as.matrix(as.integer(mtpl_test$use))-1
+FleetTest <- as.matrix(as.integer(mtpl_test$fleet))-1
+PcTest <- as.matrix(as.integer(mtpl_test$postcode))-1
+
+Ylearn <- as.matrix(mtpl_train$nclaims)
+
+Design <- layer_input(shape = c(n0), dtype = 'float32', name = 'Design')
+
+LogGAM <- layer_input(shape = c(1),   dtype = 'float32', name = 'LogGAM')
+
+Coverage <- layer_input(shape = c(1), dtype = 'int32', name = 'Coverage')
+Sex <- layer_input(shape = c(1), dtype = 'int32', name = 'Sex')
+Fuel <- layer_input(shape = c(1), dtype = 'int32', name = 'Fuel')
+Usage <- layer_input(shape = c(1), dtype = 'int32', name = 'Usage')
+Fleet <- layer_input(shape = c(1), dtype = 'int32', name = 'Fleet')
+PostalCode <- layer_input(shape = c(1), dtype = 'int32', name = 'PostalCode')
+
+CovEmb = Coverage %>%
+  layer_embedding(input_dim = NCov, output_dim = 2, input_length = 1, name = "CovEmb") %>%
+  layer_flatten(name = "Cov_flat") 
+
+SexEmb = Sex %>%
+  layer_embedding(input_dim = NSex, output_dim = 1, input_length = 1, name = "SexEmb") %>%
+  layer_flatten(name = "Sex_flat") 
+
+FuelEmb = Fuel %>%
+  layer_embedding(input_dim = NFuel, output_dim = 1, input_length = 1, name = "FuelEmb") %>%
+  layer_flatten(name = "Fuel_flat") 
+
+UsageEmb = Usage %>%
+  layer_embedding(input_dim = NUse, output_dim = 1, input_length = 1, name = "UsageEmb") %>%
+  layer_flatten(name = "Usage_flat") 
+
+FleetEmb = Fleet %>%
+  layer_embedding(input_dim = NFleet, output_dim = 1, input_length = 1, name = "FleetEmb") %>%
+  layer_flatten(name = "Fleet_flat") 
+
+Test_PD <- c()
+num_layers <- c(1,3,5)
+num_neurons <- c(5,10,15,20,30)
+activ <- c("relu", "tanh")
+
+grid_nn <- expand_grid(num_neurons, activ)
+
+## With 1 layer
+
+for(i in 1:3){ #Embedding dimensions
+  PcEmb = PostalCode %>%
+    layer_embedding(input_dim = NPc, output_dim = i, input_length = 1, name = "PcEmb") %>%
+    layer_flatten(name = "Pc_flat") 
+  bijhouden <- c()
+  for(l_1 in 1:(dim(grid_nn)[1])){
+    Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
+      layer_concatenate(name = 'concate') %>%
+      layer_dense(units=as.numeric(grid_nn[l_1, 1]), 
+                  activation=as.character(grid_nn[l_1,2]), 
+                  name='hidden1')%>%
+      layer_dense(units=1, activation='linear', name='Network')
+    
+    Response <- list(Network, LogGAM) %>% layer_add(name='Add') %>% 
+      layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
+                  weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
+    
+    model_tune <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
+                         outputs = c(Response))
+    
+    model_tune %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
+    
+    fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
+                    Ylearn, 
+                    epochs = 20, 
+                    batch_size = 1718, 
+                    verbose = 0)
+    
+    y_test <- model_tune %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
+    print(Poisson.Deviance(y_test, mtpl_test$nclaims))
+    bijhouden[l_1] <- Poisson.Deviance(y_test, mtpl_test$nclaims)
+  }
+  print(bijhouden)
+  
+}
+
