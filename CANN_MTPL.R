@@ -230,26 +230,6 @@ Usage <- layer_input(shape = c(1), dtype = 'int32', name = 'Usage')
 Fleet <- layer_input(shape = c(1), dtype = 'int32', name = 'Fleet')
 PostalCode <- layer_input(shape = c(1), dtype = 'int32', name = 'PostalCode')
 
-CovEmb = Coverage %>%
-  layer_embedding(input_dim = NCov, output_dim = 2, input_length = 1, name = "CovEmb") %>%
-  layer_flatten(name = "Cov_flat") 
-
-SexEmb = Sex %>%
-  layer_embedding(input_dim = NSex, output_dim = 1, input_length = 1, name = "SexEmb") %>%
-  layer_flatten(name = "Sex_flat") 
-
-FuelEmb = Fuel %>%
-  layer_embedding(input_dim = NFuel, output_dim = 1, input_length = 1, name = "FuelEmb") %>%
-  layer_flatten(name = "Fuel_flat") 
-
-UsageEmb = Usage %>%
-  layer_embedding(input_dim = NUse, output_dim = 1, input_length = 1, name = "UsageEmb") %>%
-  layer_flatten(name = "Usage_flat") 
-
-FleetEmb = Fleet %>%
-  layer_embedding(input_dim = NFleet, output_dim = 1, input_length = 1, name = "FleetEmb") %>%
-  layer_flatten(name = "Fleet_flat") 
-
 Test_PD <- c()
 num_layers <- c(1,3,5)
 num_neurons <- c(5,10,15,20,30)
@@ -260,6 +240,28 @@ grid_nn <- expand_grid(num_neurons, activ)
 ## With 1 layer
 
 for(i in 1:3){ #Embedding dimensions
+  # We repeat all layers, so they are initialised, and training doesn't start
+  # in the optimal position of previous one
+  CovEmb = Coverage %>%
+    layer_embedding(input_dim = NCov, output_dim = 2, input_length = 1, name = "CovEmb") %>%
+    layer_flatten(name = "Cov_flat") 
+  
+  SexEmb = Sex %>%
+    layer_embedding(input_dim = NSex, output_dim = 1, input_length = 1, name = "SexEmb") %>%
+    layer_flatten(name = "Sex_flat") 
+  
+  FuelEmb = Fuel %>%
+    layer_embedding(input_dim = NFuel, output_dim = 1, input_length = 1, name = "FuelEmb") %>%
+    layer_flatten(name = "Fuel_flat") 
+  
+  UsageEmb = Usage %>%
+    layer_embedding(input_dim = NUse, output_dim = 1, input_length = 1, name = "UsageEmb") %>%
+    layer_flatten(name = "Usage_flat") 
+  
+  FleetEmb = Fleet %>%
+    layer_embedding(input_dim = NFleet, output_dim = 1, input_length = 1, name = "FleetEmb") %>%
+    layer_flatten(name = "Fleet_flat") 
+  
   PcEmb = PostalCode %>%
     layer_embedding(input_dim = NPc, output_dim = i, input_length = 1, name = "PcEmb") %>%
     layer_flatten(name = "Pc_flat") 
@@ -267,6 +269,7 @@ for(i in 1:3){ #Embedding dimensions
   for(l_1 in 1:(dim(grid_nn)[1])){
     Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
       layer_concatenate(name = 'concate') %>%
+      layer_batch_normalization() %>%
       layer_dense(units=as.numeric(grid_nn[l_1, 1]), 
                   activation=as.character(grid_nn[l_1,2]), 
                   name='hidden1')%>%
@@ -283,7 +286,7 @@ for(i in 1:3){ #Embedding dimensions
     
     fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
                     Ylearn, 
-                    epochs = 20, 
+                    epochs = 50, 
                     batch_size = 1718, 
                     verbose = 0)
     
@@ -294,4 +297,3 @@ for(i in 1:3){ #Embedding dimensions
   print(bijhouden)
   
 }
-
