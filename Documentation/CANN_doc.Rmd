@@ -29,7 +29,7 @@ Please note that this is mostly a project done in the author's free time, so the
 # A First Example
 ## The Data Set
 Before starting to program, we need to load the necessary libraries and the MTPL dataset. 
-```r
+```{r set_up, message=FALSE}
 #### Setup ####
 
 # Libraries needed
@@ -40,7 +40,6 @@ library(readxl)
 library(maidrr)
 library(sp)
 library(sf)
-library(tmap)
 library(mapview)
 library(mgcv)
 
@@ -48,12 +47,77 @@ library(keras)
 
 # Import all data needed
 mtpl_be <- maidrr::mtpl_be #the MTPL data set used here
-postal_codes <- read_excel("inspost.xls")
+postal_codes <- read_excel("../inspost.xls")
 
 belgium_shape_sf <- st_read('../shape file Belgie postcodes/npc96_region_Project1.shp', quiet = TRUE)
 belgium_shape_sf <- st_transform(belgium_shape_sf, CRS("+proj=longlat +datum=WGS84")) 
 ```
 
-The dataset used is included in the `maidrr` package (see <https://github.com/henckr/maidrr>).
+The dataset used is included in the `maidrr` package (see <https://github.com/henckr/maidrr>). It contains 163210 entries, each having 12 features (plus 1 column with an uninformative id). An important one is the $expo$ column, which represents the duration of the contract (exposure) during our observation period. Since not all contracts were in force for the whole observation year, it is important to incorporate this into our modelling. 
+
+As an example suppose that we have two contracts where both policy holders reported one claim by the end of the year. The first one was in force over the whole year, but the second was only underwritten one month ago. There is clearly a difference in risk between the two, since we cannot say that one claim over a year and one claim over a month are the same. Hence, it will be crucial to use the exposure when modelling the number of claims for a given policy holder. 
+
+A summary of the other features are given below. There is a mix of both numerical and categorical variables. The interesting reader can exploratory data analysis themselves. 
+```{r str}
+str(mtpl_be)
+```
+The only thing that we still mention is the fact that the postal code does not correspond to a specific municipality, but the postal code areas (first two digits of the four digit postal code), see the map below taken from <https://nl.wikipedia.org/wiki/Postnummers_in_Belgi%C3%AB>.
+
+```{r, fig.width = 4, echo = FALSE}
+knitr::include_graphics("2_digit_postcode_belgique.png")
+```
+
+## Modelling Claim Count Using Age
+To illustrate the inherent flaw of a neural network when dealing with actuarial problems, we begin with a small model where the age of the policy holder is used to determine the risk, i.e., the expected number of claims. Since we are dealing with claim counts, we assume that it follows a Poisson distribution. This distributional assumption is used to apply a generalised additive model (hereinafter "GAM") to model the expected number of claims via:
+$$ \mathbb{E}(Y_i) = d_i\cdot\exp\left(\beta_0 + f_1(\text{age}_i)\right) $$
+Note that we use the exponential function to insure positivity of the mean, and that we have also incorporated the exposure, denoted by $d_i$. The function $f_1$ is a *smoother*, which in our case is equal to a thin plate spline. A full understanding of this is not necessary to follow the rest of the text. 
+
+The result of this GAM, which will be used as our base line model, is compared to the neural network. In the code, we incorporate the exposure as an offset, since we can rewrite the previous formula as follows:
+$$ \mathbb{E}(Y_i) = \exp\left(\log(d_i)+\beta_0 + f_1(\text{age}_i)\right) $$
+For the neural network, we use two hidden layers, each having 5 neurons. The activation function is the `tanh` in both cases. The exposure is added using a the `LogExpo` input node which has a non-trainable weight equal to 1 and does not use a bias term when connecting with the `layer_add` (exposure is fixed and should not be tampered with). As for the GAM, we use the exponential function as the final activation function when feeding into the output node, and this last connection is also non-trainable. The loss function is `poisson` since we assume a Poisson distribution.
+
+```{r GAMage}
+#GAM
+GAM_age <- gam(nclaims ~ s(ageph), 
+               data = mtpl_be, 
+               offset = log(expo),
+               family = poisson(link = "log"))
+
+```
+
+```{r NNage}
+#NN
+set.seed(1997)
+Design <- layer_input(shape = c(1), dtype = "float32", name = "Design")
+LogExpo <- layer_input(shape = c(1), dtype = "float32", name = "LogExpo")
+
+Network <- Design %>%
+  layer_batch_normalization(input_shape = c(1)) %>%
+  layer_dense(units = 5, activation = 'tanh', name = 'hidden1') %>%
+  layer_dense(units = 5, activation = 'tanh', name = 'hidden2') %>%
+  layer_dense(units = 1, activation = 'linear', name = 'Network')
+
+Response <- list(Network, LogExpo) %>%
+  layer_add(name = 'Add') %>%
+  layer_dense(units = 1, activation = k_exp, name = 'Response', trainable = FALSE,
+              weights = list(array(1, dim=c(1,1)), array(0, dim = c(1))))
+
+NN_age <- keras_model(inputs = c(Design, LogExpo), outputs = c(Response))
+
+NN_age %>% compile(optimizer = optimizer_adam(), 
+                    loss = "poisson")
+
+Xfeat <- as.matrix(mtpl_be$ageph)
+Xexpo <- as.matrix(log(mtpl_be$expo))
+Ylearn <- as.matrix(mtpl_be$nclaims)
+
+fit_nn_age <- NN_age %>% fit(list(Xfeat, Xexpo), Ylearn, 
+                         epochs = 10, 
+                         batch_size = 1718,
+                         validation_split = 0.2, 
+                         verbose = 0)
+
+```
+
 
 # References
