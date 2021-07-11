@@ -180,7 +180,7 @@ mtpl_test <- stratified_train_test_split[[2]]
 GAM_full <- gam(nclaims ~ coverage + s(ageph) + sex + s(bm) + s(power) + 
                   s(agec) + fuel + use + fleet + postcode, 
                 data = mtpl_train, 
-                offset = expo, 
+                offset = log(expo), 
                 family = poisson(link = "log"))
 
 par(mfrow = c(2,2))
@@ -234,7 +234,6 @@ Usage <- layer_input(shape = c(1), dtype = 'int32', name = 'Usage')
 Fleet <- layer_input(shape = c(1), dtype = 'int32', name = 'Fleet')
 PostalCode <- layer_input(shape = c(1), dtype = 'int32', name = 'PostalCode')
 
-Test_PD <- c()
 num_layers <- c(1,3)
 num_neurons <- c(5,10,15)
 activ <- c("relu", "tanh")
@@ -273,7 +272,7 @@ for(i in 1:2){ #Embedding dimensions
   PcEmb = PostalCode %>%
     layer_embedding(input_dim = NPc, output_dim = i, input_length = 1, name = "PcEmb") %>%
     layer_flatten(name = "Pc_flat") 
-  bijhouden <- c()
+  
   for(l_1 in 1:(dim(grid_nn)[1])){
     Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
       layer_concatenate(name = 'concate') %>%
@@ -395,3 +394,104 @@ Result3 <- Tune_3 %>%
   mutate(number_neurons1 = as.numeric(grid_nn[l_1, 1]),
          number_neurons2 = as.numeric(grid_nn[l_2, 1]),
          number_neurons3 = as.numeric(grid_nn[l_3, 1])); Result3
+
+Result1$pois_dev
+Result3$pois_dev
+
+
+#### Total number of claims predicted ####
+#First retrain the models with the resulting hyperparameters
+
+## One layer network
+CovEmb = Coverage %>%
+  layer_embedding(input_dim = NCov, output_dim = 2, input_length = 1, name = "CovEmb") %>%
+  layer_flatten(name = "Cov_flat") 
+
+SexEmb = Sex %>%
+  layer_embedding(input_dim = NSex, output_dim = 1, input_length = 1, name = "SexEmb") %>%
+  layer_flatten(name = "Sex_flat") 
+
+FuelEmb = Fuel %>%
+  layer_embedding(input_dim = NFuel, output_dim = 1, input_length = 1, name = "FuelEmb") %>%
+  layer_flatten(name = "Fuel_flat") 
+
+UsageEmb = Usage %>%
+  layer_embedding(input_dim = NUse, output_dim = 1, input_length = 1, name = "UsageEmb") %>%
+  layer_flatten(name = "Usage_flat") 
+
+FleetEmb = Fleet %>%
+  layer_embedding(input_dim = NFleet, output_dim = 1, input_length = 1, name = "FleetEmb") %>%
+  layer_flatten(name = "Fleet_flat") 
+
+PcEmb = PostalCode %>%
+  layer_embedding(input_dim = NPc, output_dim = 2, input_length = 1, name = "PcEmb") %>%
+  layer_flatten(name = "Pc_flat") 
+
+Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
+  layer_concatenate(name = 'concate') %>%
+  layer_batch_normalization() %>%
+  layer_dense(units=5, 
+              activation="relu", 
+              name='hidden1')%>%
+  layer_dense(units=1, activation='linear', name='Network')
+
+Response <- list(Network, LogGAM) %>% layer_add(name='Add') %>% 
+  layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
+              weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
+
+model_1 <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
+                          outputs = c(Response))
+
+model_1 %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
+
+fit_1 <- model_1 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
+                               Ylearn, 
+                               epochs = 20, 
+                               batch_size = 1718)
+
+y_pred_1 <- model_1 %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
+Poisson.Deviance(y_pred_1, mtpl_test$nclaims)
+
+#Three layer network
+Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
+  layer_concatenate(name = 'concate') %>%
+  layer_batch_normalization() %>%
+  layer_dense(units=as.numeric(num_neurons[l_1]), 
+              activation="relu", 
+              name='hidden1')%>%
+  layer_dense(units=as.numeric(num_neurons[l_2]), 
+              activation="relu", 
+              name='hidden2')%>%
+  layer_dense(units=as.numeric(num_neurons[l_3]), 
+              activation="relu", 
+              name='hidden3')%>%
+  layer_dense(units=1, activation='linear', name='Network')
+
+Response <- list(Network, LogGAM) %>% layer_add(name='Add') %>% 
+  layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
+              weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
+
+model_3 <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
+                          outputs = c(Response))
+
+model_3 %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
+
+fit_3 <- model_3 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
+                               Ylearn, 
+                               epochs = 25, 
+                               batch_size = 1718)
+
+y_pred_3 <- model_3 %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
+Poisson.Deviance(y_pred_3, mtpl_test$nclaims)
+
+# Total claims predicted
+Total_claims <- sum(mtpl_test$nclaims)
+
+Total_GAM <- sum(GAM_full %>% 
+  predict(newdata= mtpl_train, type = "response"))
+
+Total_1 <- sum(y_pred_1)
+
+Total_3 <- sum(y_pred_3)
+
+tibble(Total_claims, Total_GAM, Total_1, Total_3)
