@@ -186,6 +186,10 @@ GAM_full <- gam(nclaims ~ coverage + s(ageph) + sex + s(bm) + s(power) +
 par(mfrow = c(2,2))
 plot(GAM_full, scale = 0)
 
+# Results from the GAM are our benchmark
+y_test_fullGAM <- GAM_full %>% predict(newdata = mtpl_test, type = "response")
+Poisson.Deviance(y_test_fullGAM, mtpl_test$nclaims)
+
 ## CANN
 # We use embeddings for the factor varaibles
 non_cat <- c(5, 7:9)
@@ -290,7 +294,7 @@ for(i in 1:3){ #Embedding dimensions
     
     fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
                     Ylearn, 
-                    epochs = 50, 
+                    epochs = 30, 
                     batch_size = 1718, 
                     verbose = 0)
     
@@ -366,7 +370,7 @@ for(i in 1:3){ #Embedding dimensions
         
         fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
                                        Ylearn, 
-                                       epochs = 50, 
+                                       epochs = 30, 
                                        batch_size = 1718, 
                                        verbose = 0)
         
@@ -457,7 +461,7 @@ for(i in 1:3){ #Embedding dimensions
             
             fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
                                            Ylearn, 
-                                           epochs = 50, 
+                                           epochs = 30, 
                                            batch_size = 1718, 
                                            verbose = 0)
             
