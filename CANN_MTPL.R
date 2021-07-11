@@ -351,13 +351,13 @@ for(i in 1:2){ #Embedding dimensions
           layer_concatenate(name = 'concate') %>%
           layer_batch_normalization() %>%
           layer_dense(units=as.numeric(num_neurons[l_1]), 
-                      activation="relu", 
+                      activation="tanh", 
                       name='hidden1')%>%
           layer_dense(units=as.numeric(num_neurons[l_2]), 
-                      activation="relu", 
+                      activation="tanh", 
                       name='hidden2')%>%
           layer_dense(units=as.numeric(num_neurons[l_3]), 
-                      activation="relu", 
+                      activation="tanh", 
                       name='hidden3')%>%
           layer_dense(units=1, activation='linear', name='Network')
         
@@ -391,9 +391,9 @@ for(i in 1:2){ #Embedding dimensions
 
 Result3 <- Tune_3 %>% 
   filter(pois_dev == min(pois_dev)) %>%
-  mutate(number_neurons1 = as.numeric(grid_nn[l_1, 1]),
-         number_neurons2 = as.numeric(grid_nn[l_2, 1]),
-         number_neurons3 = as.numeric(grid_nn[l_3, 1])); Result3
+  mutate(number_neurons1 = as.numeric(num_neurons[l_1]),
+         number_neurons2 = as.numeric(num_neurons[l_2]),
+         number_neurons3 = as.numeric(num_neurons[l_3])); Result3
 
 Result1$pois_dev
 Result3$pois_dev
@@ -401,6 +401,7 @@ Result3$pois_dev
 
 #### Total number of claims predicted ####
 #First retrain the models with the resulting hyperparameters
+set.seed(1997)
 
 ## One layer network
 CovEmb = Coverage %>%
@@ -424,14 +425,14 @@ FleetEmb = Fleet %>%
   layer_flatten(name = "Fleet_flat") 
 
 PcEmb = PostalCode %>%
-  layer_embedding(input_dim = NPc, output_dim = 2, input_length = 1, name = "PcEmb") %>%
+  layer_embedding(input_dim = NPc, output_dim = 1, input_length = 1, name = "PcEmb") %>%
   layer_flatten(name = "Pc_flat") 
 
 Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
   layer_concatenate(name = 'concate') %>%
   layer_batch_normalization() %>%
-  layer_dense(units=5, 
-              activation="relu", 
+  layer_dense(units=15, 
+              activation="tanh", 
               name='hidden1')%>%
   layer_dense(units=1, activation='linear', name='Network')
 
@@ -456,14 +457,14 @@ Poisson.Deviance(y_pred_1, mtpl_test$nclaims)
 Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
   layer_concatenate(name = 'concate') %>%
   layer_batch_normalization() %>%
-  layer_dense(units=as.numeric(num_neurons[l_1]), 
-              activation="relu", 
+  layer_dense(units=5, 
+              activation="tanh", 
               name='hidden1')%>%
-  layer_dense(units=as.numeric(num_neurons[l_2]), 
-              activation="relu", 
+  layer_dense(units=15, 
+              activation="tanh", 
               name='hidden2')%>%
-  layer_dense(units=as.numeric(num_neurons[l_3]), 
-              activation="relu", 
+  layer_dense(units=5, 
+              activation="tanh", 
               name='hidden3')%>%
   layer_dense(units=1, activation='linear', name='Network')
 
@@ -478,7 +479,7 @@ model_3 %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
 
 fit_3 <- model_3 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
                                Ylearn, 
-                               epochs = 25, 
+                               epochs = 20, 
                                batch_size = 1718)
 
 y_pred_3 <- model_3 %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
@@ -488,7 +489,7 @@ Poisson.Deviance(y_pred_3, mtpl_test$nclaims)
 Total_claims <- sum(mtpl_test$nclaims)
 
 Total_GAM <- sum(GAM_full %>% 
-  predict(newdata= mtpl_train, type = "response"))
+  predict(newdata= mtpl_test, type = "response"))
 
 Total_1 <- sum(y_pred_1)
 
