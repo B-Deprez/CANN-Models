@@ -206,8 +206,8 @@ pre code {
 </div>
 <div id="a-first-example" class="section level1">
 <h1>A First Example</h1>
-<div id="set-up" class="section level2">
-<h2>Set up</h2>
+<div id="the-data-set" class="section level2">
+<h2>The Data Set</h2>
 <p>Before starting to program, we need to load the necessary libraries and the MTPL dataset.</p>
 <pre class="r"><code>#### Setup ####
 
@@ -231,9 +231,7 @@ postal_codes &lt;- read_excel(&quot;inspost.xls&quot;)
 
 belgium_shape_sf &lt;- st_read(&#39;../shape file Belgie postcodes/npc96_region_Project1.shp&#39;, quiet = TRUE)
 belgium_shape_sf &lt;- st_transform(belgium_shape_sf, CRS(&quot;+proj=longlat +datum=WGS84&quot;)) </code></pre>
-</div>
-<div id="the-data-set" class="section level2">
-<h2>The Data Set</h2>
+<p>The dataset used is included in the <code>maidrr</code> package (see <a href="https://github.com/henckr/maidrr" class="uri">https://github.com/henckr/maidrr</a>).</p>
 </div>
 </div>
 <div id="references" class="section level1 unnumbered">

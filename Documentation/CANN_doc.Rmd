@@ -27,7 +27,7 @@ All neural network implementations are done using the `keras` library in `R`.
 Please note that this is mostly a project done in the author's free time, so the code is not always optimised and some *best practices* may be absent. 
 
 # A First Example
-## Set up
+## The Data Set
 Before starting to program, we need to load the necessary libraries and the MTPL dataset. 
 ```r
 #### Setup ####
@@ -54,6 +54,6 @@ belgium_shape_sf <- st_read('../shape file Belgie postcodes/npc96_region_Project
 belgium_shape_sf <- st_transform(belgium_shape_sf, CRS("+proj=longlat +datum=WGS84")) 
 ```
 
-## The Data Set
+The dataset used is included in the `maidrr` package (see <https://github.com/henckr/maidrr>).
 
 # References
