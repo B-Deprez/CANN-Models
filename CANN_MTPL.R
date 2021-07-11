@@ -235,8 +235,8 @@ Fleet <- layer_input(shape = c(1), dtype = 'int32', name = 'Fleet')
 PostalCode <- layer_input(shape = c(1), dtype = 'int32', name = 'PostalCode')
 
 Test_PD <- c()
-num_layers <- c(1,3,5)
-num_neurons <- c(5,10,15,20,30)
+num_layers <- c(1,3)
+num_neurons <- c(5,10,15)
 activ <- c("relu", "tanh")
 
 grid_nn <- expand_grid(num_neurons, activ)
@@ -247,7 +247,7 @@ Tune_1 <- tibble(emb_dim = integer(),
                  l_1 = integer(), 
                  pois_dev = numeric())
 
-for(i in 1:3){ #Embedding dimensions
+for(i in 1:2){ #Embedding dimensions
   # We repeat all layers, so they are initialised, and training doesn't start
   # in the optimal position of previous one
   CovEmb = Coverage %>%
@@ -294,7 +294,7 @@ for(i in 1:3){ #Embedding dimensions
     
     fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
                     Ylearn, 
-                    epochs = 30, 
+                    epochs = 20, 
                     batch_size = 1718, 
                     verbose = 0)
     
@@ -305,7 +305,10 @@ for(i in 1:3){ #Embedding dimensions
   }
 }
 
-Result1 <- Tune_1 %>% filter(pois_dev == min(pois_dev))
+Result1 <- Tune_1 %>% 
+  filter(pois_dev == min(pois_dev)) %>%
+  mutate(number_neurons = as.numeric(grid_nn[l_1, 1]),
+         activation = as.character(grid_nn[l_1, 2])); Result1
 
 
 # 3 hidden layers
@@ -315,7 +318,7 @@ Tune_3 <- tibble(emb_dim = integer(),
                  l_3 = integer(), 
                  pois_dev = numeric())
 
-for(i in 1:3){ #Embedding dimensions
+for(i in 1:2){ #Embedding dimensions
   # We repeat all layers, so they are initialised, and training doesn't start
   # in the optimal position of previous one
   CovEmb = Coverage %>%
@@ -349,13 +352,13 @@ for(i in 1:3){ #Embedding dimensions
           layer_concatenate(name = 'concate') %>%
           layer_batch_normalization() %>%
           layer_dense(units=as.numeric(grid_nn[l_1, 1]), 
-                      activation=as.character(grid_nn[l_1,2]), 
+                      activation="relu", 
                       name='hidden1')%>%
           layer_dense(units=as.numeric(grid_nn[l_2, 1]), 
-                      activation=as.character(grid_nn[l_1,2]), 
+                      activation="relu", 
                       name='hidden2')%>%
           layer_dense(units=as.numeric(grid_nn[l_3, 1]), 
-                      activation=as.character(grid_nn[l_1,2]), 
+                      activation="relu", 
                       name='hidden3')%>%
           layer_dense(units=1, activation='linear', name='Network')
         
@@ -370,7 +373,7 @@ for(i in 1:3){ #Embedding dimensions
         
         fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
                                        Ylearn, 
-                                       epochs = 30, 
+                                       epochs = 20, 
                                        batch_size = 1718, 
                                        verbose = 0)
         
@@ -387,99 +390,11 @@ for(i in 1:3){ #Embedding dimensions
   }
 }
 
-Result3 <- Tune_3 %>% filter(pois_dev == min(pois_dev)); Result3
-
-# 5 hidden layers
-Tune_5 <- tibble(emb_dim = integer(), 
-                 l_1 = integer(), 
-                 l_2 = integer(), 
-                 l_3 = integer(), 
-                 l_4 = integer(), 
-                 l_5 = integer(),
-                 pois_dev = numeric())
-
-for(i in 1:3){ #Embedding dimensions
-  # We repeat all layers, so they are initialised, and training doesn't start
-  # in the optimal position of previous one
-  CovEmb = Coverage %>%
-    layer_embedding(input_dim = NCov, output_dim = 2, input_length = 1, name = "CovEmb") %>%
-    layer_flatten(name = "Cov_flat") 
-  
-  SexEmb = Sex %>%
-    layer_embedding(input_dim = NSex, output_dim = 1, input_length = 1, name = "SexEmb") %>%
-    layer_flatten(name = "Sex_flat") 
-  
-  FuelEmb = Fuel %>%
-    layer_embedding(input_dim = NFuel, output_dim = 1, input_length = 1, name = "FuelEmb") %>%
-    layer_flatten(name = "Fuel_flat") 
-  
-  UsageEmb = Usage %>%
-    layer_embedding(input_dim = NUse, output_dim = 1, input_length = 1, name = "UsageEmb") %>%
-    layer_flatten(name = "Usage_flat") 
-  
-  FleetEmb = Fleet %>%
-    layer_embedding(input_dim = NFleet, output_dim = 1, input_length = 1, name = "FleetEmb") %>%
-    layer_flatten(name = "Fleet_flat") 
-  
-  PcEmb = PostalCode %>%
-    layer_embedding(input_dim = NPc, output_dim = i, input_length = 1, name = "PcEmb") %>%
-    layer_flatten(name = "Pc_flat") 
-  
-  for(l_1 in 1:(dim(grid_nn)[1])){
-    for(l_2 in 1:(dim(grid_nn)[1])){
-      for(l_3 in 1:(dim(grid_nn)[1])){
-        for(l_4 in 1:(dim(grid_nn)[1])){
-          for(l_5 in 1:(dim(grid_nn)[1])){
-            Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
-              layer_concatenate(name = 'concate') %>%
-              layer_batch_normalization() %>%
-              layer_dense(units=as.numeric(grid_nn[l_1, 1]), 
-                          activation=as.character(grid_nn[l_1,2]), 
-                          name='hidden1')%>%
-              layer_dense(units=as.numeric(grid_nn[l_2, 1]), 
-                          activation=as.character(grid_nn[l_1,2]), 
-                          name='hidden2')%>%
-              layer_dense(units=as.numeric(grid_nn[l_3, 1]), 
-                          activation=as.character(grid_nn[l_1,2]), 
-                          name='hidden3')%>%
-              layer_dense(units=as.numeric(grid_nn[l_3, 1]), 
-                          activation=as.character(grid_nn[l_1,2]), 
-                          name='hidden4')%>%
-              layer_dense(units=as.numeric(grid_nn[l_3, 1]), 
-                          activation=as.character(grid_nn[l_1,2]), 
-                          name='hidden5')%>%
-              layer_dense(units=1, activation='linear', name='Network')
-            
-            Response <- list(Network, LogGAM) %>% layer_add(name='Add') %>% 
-              layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
-                          weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
-            
-            model_tune <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
-                                      outputs = c(Response))
-            
-            model_tune %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
-            
-            fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
-                                           Ylearn, 
-                                           epochs = 30, 
-                                           batch_size = 1718, 
-                                           verbose = 0)
-            
-            y_test <- model_tune %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
-            pois_dev <- Poisson.Deviance(y_test, mtpl_test$nclaims)
-            print(pois_dev)
-            Tune_3 <- Tune_3 %>% add_row(emb_dim = i, 
-                                         l_1 = l_1,
-                                         l_2 = l_2, 
-                                         l_3 = l_3, 
-                                         l_4 = l_4, 
-                                         l_5 = l_5,
-                                         pois_dev = pois_dev)
-          }
-        }
-      }
-    }
-  }
-}
-
-Result5 <- Tune_5 %>% filter(pois_dev == min(pois_dev)); Result5
+Result3 <- Tune_3 %>% 
+  filter(pois_dev == min(pois_dev)) %>%
+  mutate(number_neurons1 = as.numeric(grid_nn[l_1, 1]),
+         activation1 = as.character(grid_nn[l_1, 2]),
+         number_neurons2 = as.numeric(grid_nn[l_2, 1]),
+         activation2 = as.character(grid_nn[l_2, 2]),
+         number_neurons3 = as.numeric(grid_nn[l_3, 1]),
+         activation3 = as.character(grid_nn[l_3, 2])); Result3
