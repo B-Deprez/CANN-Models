@@ -1,0 +1,59 @@
+---
+title: "CANN_Models Applied to a Belgian MTPL Dataset"
+author: "Bruno Deprez"
+date: "`r Sys.Date()`"
+output: html_document
+bibliography: Bibliography.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+With the growth of available data and evolution of (cloud) computing, their is an increased interest to apply machine learning techniques to actuarial problems. This trend has been accelerated due to the Covid-19 crisis, see [@eiopa2019big] and [@eiopa2021XAI].
+
+In this paper, we take a look at one way of introducing neural networks when working with a motor third party liability (hereinafter "MTPL") insurance, more specifically when modelling the claim count of an affiliate. We will see that naively training a neural network misses some of the key aspects of the data. When dealing with claim count data, most values are 0 since most policy holders do not report a claim during the year. However, the data is also skewed with fat tails. This makes it harder to train a neural network on the data, even after normalisation. 
+
+The solution presented in this text comes from [@schelldorfer2019nesting]. The paper deals with Combined Actuarial Neural Networks (thereinafter "CANN"), which starts from a classical statistical model, like a generalised linear model (thereinafter "GLM"), and uses the neural network to uncover interaction effects and make adjustments to the predictions from the GLM.
+
+Where [@schelldorfer2019nesting] makes mostly ad hoc choices, since the focus was more on showing the reader how to implement a CANN model, we go a step further and also do some basic hyperparameter tuning. 
+
+We start with a small introduction of the dataset and show visually why we need to move from a neural network to a CANN model. After that, we start modelling a full CANN using the MTPL dataset for Belgium. The results of different models will be compared with each other in order to make some conclusions on this new technique. 
+
+All neural network implementations are done using the `keras` library in `R`.
+
+Please note that this is mostly a project done in the author's free time, so the code is not always optimised and some *best practices* may be absent. 
+
+# A First Example
+## Set up
+Before starting to program, we need to load the necessary libraries and the MTPL dataset. 
+```r
+#### Setup ####
+
+# Libraries needed
+library(tidyverse)
+library(readxl)
+library(MASS)
+library(readxl)
+library(maidrr)
+library(sp)
+library(sf)
+library(tmap)
+library(mapview)
+library(mgcv)
+
+library(keras)
+
+# Import all data needed
+mtpl_be <- maidrr::mtpl_be #the MTPL data set used here
+postal_codes <- read_excel("inspost.xls")
+
+belgium_shape_sf <- st_read('../shape file Belgie postcodes/npc96_region_Project1.shp', quiet = TRUE)
+belgium_shape_sf <- st_transform(belgium_shape_sf, CRS("+proj=longlat +datum=WGS84")) 
+```
+
+## The Data Set
+
+# References
