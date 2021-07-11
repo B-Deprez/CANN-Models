@@ -198,7 +198,7 @@ pre code {
 <h1>Introduction</h1>
 <p>With the growth of available data and evolution of (cloud) computing, their is an increased interest to apply machine learning techniques to actuarial problems. This trend has been accelerated due to the Covid-19 crisis, see <span class="citation">(EIOPA 2019)</span> and <span class="citation">(EIOPA 2021)</span>.</p>
 <p>In this paper, we take a look at one way of introducing neural networks when working with a motor third party liability (hereinafter “MTPL”) insurance, more specifically when modelling the claim count of an affiliate. We will see that naively training a neural network misses some of the key aspects of the data. When dealing with claim count data, most values are 0 since most policy holders do not report a claim during the year. However, the data is also skewed with fat tails. This makes it harder to train a neural network on the data, even after normalisation.</p>
-<p>The solution presented in this text comes from <span class="citation">(Schelldorfer and Wuthrich 2019)</span>. The paper deals with Combined Actuarial Neural Networks (thereinafter “CANN”), which starts from a classical statistical model, like a generalised linear model (thereinafter “GLM”), and uses the neural network to uncover interaction effects and make adjustments to the predictions from the GLM.</p>
+<p>The solution presented in this text comes from <span class="citation">(Schelldorfer and Wuthrich 2019)</span>. The paper deals with Combined Actuarial Neural Networks (hereinafter “CANN”), which starts from a classical statistical model, like a generalised linear model (hereinafter “GLM”), and uses the neural network to uncover interaction effects and make adjustments to the predictions from the GLM.</p>
 <p>Where <span class="citation">(Schelldorfer and Wuthrich 2019)</span> makes mostly ad hoc choices, since the focus was more on showing the reader how to implement a CANN model, we go a step further and also do some basic hyperparameter tuning.</p>
 <p>We start with a small introduction of the dataset and show visually why we need to move from a neural network to a CANN model. After that, we start modelling a full CANN using the MTPL dataset for Belgium. The results of different models will be compared with each other in order to make some conclusions on this new technique.</p>
 <p>All neural network implementations are done using the <code>keras</code> library in <code>R</code>.</p>
@@ -290,6 +290,8 @@ fit_nn_age &lt;- NN_age %&gt;% fit(list(Xfeat, Xexpo), Ylearn,
                          batch_size = 1718,
                          validation_split = 0.2, 
                          verbose = 0)</code></pre>
+<p>In order to compare the outcomes, we look at the predictions for every age. In addition, we also considered each age as an individual factor an fit a GLM. When looking at the plot below, we see that the GAM captured the trend in the data well. We see a decrease of claim frequency for increasing ages. This decrease stabalises around 40 to 50 years old, most likely since the children of these people learn to drive with their parent’s car, and cause more accidents.</p>
+<p>The neural network, on the other hand, is able to point to the fact that claim frequency improves with age, but it may be too <em>simplistic</em>. The patterns throughout the ages is not captured.</p>
 </div>
 </div>
 <div id="references" class="section level1 unnumbered">

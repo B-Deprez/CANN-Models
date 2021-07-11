@@ -16,7 +16,7 @@ With the growth of available data and evolution of (cloud) computing, their is a
 
 In this paper, we take a look at one way of introducing neural networks when working with a motor third party liability (hereinafter "MTPL") insurance, more specifically when modelling the claim count of an affiliate. We will see that naively training a neural network misses some of the key aspects of the data. When dealing with claim count data, most values are 0 since most policy holders do not report a claim during the year. However, the data is also skewed with fat tails. This makes it harder to train a neural network on the data, even after normalisation. 
 
-The solution presented in this text comes from [@schelldorfer2019nesting]. The paper deals with Combined Actuarial Neural Networks (thereinafter "CANN"), which starts from a classical statistical model, like a generalised linear model (thereinafter "GLM"), and uses the neural network to uncover interaction effects and make adjustments to the predictions from the GLM.
+The solution presented in this text comes from [@schelldorfer2019nesting]. The paper deals with Combined Actuarial Neural Networks (hereinafter "CANN"), which starts from a classical statistical model, like a generalised linear model (hereinafter "GLM"), and uses the neural network to uncover interaction effects and make adjustments to the predictions from the GLM.
 
 Where [@schelldorfer2019nesting] makes mostly ad hoc choices, since the focus was more on showing the reader how to implement a CANN model, we go a step further and also do some basic hyperparameter tuning. 
 
@@ -119,5 +119,8 @@ fit_nn_age <- NN_age %>% fit(list(Xfeat, Xexpo), Ylearn,
 
 ```
 
+In order to compare the outcomes, we look at the predictions for every age. In addition, we also considered each age as an individual factor an fit a GLM. When looking at the plot below, we see that the GAM captured the trend in the data well. We see a decrease of claim frequency for increasing ages. This decrease stabalises around 40 to 50 years old, most likely since the children of these people learn to drive with their parent's car, and cause more accidents. 
+
+The neural network, on the other hand, is able to point to the fact that claim frequency improves with age, but it may be too *simplistic*. The patterns throughout the ages is not captured.
 
 # References
