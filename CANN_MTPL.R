@@ -345,19 +345,19 @@ for(i in 1:2){ #Embedding dimensions
     layer_embedding(input_dim = NPc, output_dim = i, input_length = 1, name = "PcEmb") %>%
     layer_flatten(name = "Pc_flat") 
   
-  for(l_1 in 1:(dim(grid_nn)[1])){
-    for(l_2 in 1:(dim(grid_nn)[1])){
-      for(l_3 in 1:(dim(grid_nn)[1])){
+  for(l_1 in 1:(length(num_neurons))){
+    for(l_2 in 1:(length(num_neurons))){
+      for(l_3 in 1:(length(num_neurons))){
         Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
           layer_concatenate(name = 'concate') %>%
           layer_batch_normalization() %>%
-          layer_dense(units=as.numeric(grid_nn[l_1, 1]), 
+          layer_dense(units=as.numeric(num_neurons[l_1]), 
                       activation="relu", 
                       name='hidden1')%>%
-          layer_dense(units=as.numeric(grid_nn[l_2, 1]), 
+          layer_dense(units=as.numeric(num_neurons[l_2]), 
                       activation="relu", 
                       name='hidden2')%>%
-          layer_dense(units=as.numeric(grid_nn[l_3, 1]), 
+          layer_dense(units=as.numeric(num_neurons[l_3]), 
                       activation="relu", 
                       name='hidden3')%>%
           layer_dense(units=1, activation='linear', name='Network')
@@ -393,8 +393,5 @@ for(i in 1:2){ #Embedding dimensions
 Result3 <- Tune_3 %>% 
   filter(pois_dev == min(pois_dev)) %>%
   mutate(number_neurons1 = as.numeric(grid_nn[l_1, 1]),
-         activation1 = as.character(grid_nn[l_1, 2]),
          number_neurons2 = as.numeric(grid_nn[l_2, 1]),
-         activation2 = as.character(grid_nn[l_2, 2]),
-         number_neurons3 = as.numeric(grid_nn[l_3, 1]),
-         activation3 = as.character(grid_nn[l_3, 2])); Result3
+         number_neurons3 = as.numeric(grid_nn[l_3, 1])); Result3
