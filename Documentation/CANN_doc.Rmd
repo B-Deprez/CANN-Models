@@ -241,6 +241,12 @@ It may not be highly visible here, but the CANN has made some correction to the 
 
 # Modelling the Full Dataset
 ## Some theory
+In this part, we cover some basic concepts needed to build and evaluate the different models. 
 
+To start, we need to define some *loss function* to evaluate the performance of the model. Since we are dealing with count data, we want to take the characteristics of the distribution into account. In this paper, we always assume a Poisson distribution, hence we are going to use the Poisson deviance as our loss function. This is defined as follows: 
+$$ D^\text{Poisson}(\boldsymbol{y}, f_\text{predict}(\boldsymbol{x})) = \frac{2}{n}\sum_{i=1}^N \left( y_i \cdot \ln\left(\frac{y_i}{f_\text{predict}(x_i)}  \right) - \left(y_i-f_\text{predict}(x_i)\right) \right). $$
+This Poisson deviance expresses how much the model deviates from a model that just reproduces the data, i.e., you take the observed number of claims as the average number of claims for each policy holder.
+
+In order to better grasp the performance of the model on unseen data, we do a train test split. 
 
 # References
