@@ -425,7 +425,7 @@ FleetEmb = Fleet %>%
   layer_flatten(name = "Fleet_flat") 
 
 PcEmb = PostalCode %>%
-  layer_embedding(input_dim = NPc, output_dim = 1, input_length = 1, name = "PcEmb") %>%
+  layer_embedding(input_dim = NPc, output_dim = 2, input_length = 1, name = "PcEmb") %>%
   layer_flatten(name = "Pc_flat") 
 
 Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
@@ -454,6 +454,10 @@ y_pred_1 <- model_1 %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest,
 Poisson.Deviance(y_pred_1, mtpl_test$nclaims)
 
 #Three layer network
+PcEmb = PostalCode %>%
+  layer_embedding(input_dim = NPc, output_dim = 1, input_length = 1, name = "PcEmb") %>%
+  layer_flatten(name = "Pc_flat")
+
 Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
   layer_concatenate(name = 'concate') %>%
   layer_batch_normalization() %>%

@@ -14,11 +14,11 @@ knitr::opts_chunk$set(echo = TRUE)
 
 With the growth of available data and evolution of (cloud) computing, their is an increased interest to apply machine learning techniques to actuarial problems. This trend has been accelerated due to the Covid-19 crisis, see [@eiopa2019big] and [@eiopa2021XAI].
 
-In this paper, we take a look at one way of introducing neural networks when working with a motor third party liability (hereinafter "MTPL") insurance, more specifically when modelling the claim count of an affiliate. We will see that naively training a neural network misses some of the key aspects of the data. When dealing with claim count data, most values are 0 since most policy holders do not report a claim during the year. However, the data is also skewed with fat tails. This makes it harder to train a neural network on the data, even after normalisation. 
+In this paper, we take a look at one way of introducing neural networks when working with a motor third party liability (hereinafter "MTPL") insurance, and more specifically when modelling the claim count of an affiliate. We will see that naively training a neural network misses some of the key aspects of the data. When dealing with claim count data, most values are 0 since most policy holders do not report a claim during the year. However, the data is also skewed with fat tails. This makes it harder to train a neural network on the data, even after normalisation. 
 
 The solution presented in this text comes from [@schelldorfer2019nesting]. The paper deals with Combined Actuarial Neural Networks (hereinafter "CANN"), which starts from a classical statistical model, like a generalised linear model (hereinafter "GLM"), and uses the neural network to uncover interaction effects and make adjustments to the predictions from the GLM.
 
-Where [@schelldorfer2019nesting] makes mostly ad hoc choices, since the focus was more on showing the reader how to implement a CANN model, we go a step further and also do some basic hyperparameter tuning. 
+Where [@schelldorfer2019nesting] makes mostly ad hoc choices, since the focus was more on showing the reader how to implement a CANN model, we go a step further and also do some basic hyperparameter tuning. We do, however, refer the reader to that paper in order to obtain a deeper understanding of what is represented here. 
 
 We start with a small introduction of the dataset and show visually why we need to move from a neural network to a CANN model. After that, we start modelling a full CANN using the MTPL dataset for Belgium. The results of different models will be compared with each other in order to make some conclusions on this new technique. 
 
@@ -53,15 +53,15 @@ belgium_shape_sf <- st_read('../shape file Belgie postcodes/npc96_region_Project
 belgium_shape_sf <- st_transform(belgium_shape_sf, CRS("+proj=longlat +datum=WGS84")) 
 ```
 
-The dataset used is included in the `maidrr` package (see <https://github.com/henckr/maidrr>). It contains 163210 entries, each having 12 features (plus 1 column with an uninformative id). An important one is the $expo$ column, which represents the duration of the contract (exposure) during our observation period. Since not all contracts were in force for the whole observation year, it is important to incorporate this into our modelling. 
+The dataset used is included in the `maidrr` package (see <https://github.com/henckr/maidrr>). It contains 163210 entries, each having 12 features (plus 1 column with an uninformative id). An important one is the `expo` column, which represents the duration of the contract (exposure) during our observation period (1 year). Since not all contracts were in force for the whole observation year, it is important to incorporate this into our modelling. 
 
 As an example suppose that we have two contracts where both policy holders reported one claim by the end of the year. The first one was in force over the whole year, but the second was only underwritten one month ago. There is clearly a difference in risk between the two, since we cannot say that one claim over a year and one claim over a month are the same. Hence, it will be crucial to use the exposure when modelling the number of claims for a given policy holder. 
 
-A summary of the other features are given below. There is a mix of both numerical and categorical variables. The interesting reader can exploratory data analysis themselves. 
+A summary of the other features are given below. There is a mix of both numerical and categorical variables. The interesting reader can do further exploratory data analysis, but this is outside the scope of this paper^[It is, however, very important to always get a grip on the data your dealing with. This is not a step that can be skipped when making a model yourself.]. 
 ```{r str}
 str(mtpl_be)
 ```
-The only thing that we still mention is the fact that the postal code does not correspond to a specific municipality, but the postal code areas (first two digits of the four digit postal code), see the map below taken from <https://nl.wikipedia.org/wiki/Postnummers_in_Belgi%C3%AB>.
+The only thing that we still mention is the fact that the postal code does not correspond to a specific municipality, but the postal code areas (first two digits of the four digit postal code), see the map below taken from <https://nl.wikipedia.org/wiki/Postnummers_in_Belgi%C3%AB>. We will come back to this later.
 
 ```{r, fig.width = 4, echo = FALSE}
 knitr::include_graphics("2_digit_postcode_belgique.png")
@@ -71,7 +71,7 @@ knitr::include_graphics("2_digit_postcode_belgique.png")
 ### A First Try
 To illustrate the inherent flaw of a neural network when dealing with actuarial problems, we begin with a small model where the age of the policy holder is used to determine the risk, i.e., the expected number of claims^[This example is inspired by <https://katrienantonio.github.io/hands-on-machine-learning-R-module-3/sheets/ML_part3.html#94>]. Since we are dealing with claim counts, we assume that it follows a Poisson distribution. This distributional assumption is used to apply a generalised additive model (hereinafter "GAM") to model the expected number of claims via:
 $$ \mathbb{E}(Y_i) = d_i\cdot\exp\left(\beta_0 + f_1(\text{age}_i)\right) $$
-Note that we use the exponential function to insure positivity of the mean, and that we have also incorporated the exposure, denoted by $d_i$. The function $f_1$ is a *smoother*, which in our case is equal to a thin plate spline. A full understanding of this is not necessary to follow the rest of the text. 
+Note that we use the exponential function to insure positivity of the mean, and that we have also incorporated the exposure, denoted by $d_i$. The function $f_1$ is a *smoother*, which in our case is equal to a thin plate spline. A full understanding of this is not necessary to follow the rest of the text. Just keep in mind that a smoother tries to capture the structure in the data using a *smooth line*. 
 
 The result of this GAM, which will be used as our base line model, is compared to the neural network. In the code, we incorporate the exposure as an offset, since we can rewrite the previous formula as follows:
 $$ \mathbb{E}(Y_i) = \exp\left(\log(d_i)+\beta_0 + f_1(\text{age}_i)\right) $$
@@ -120,7 +120,7 @@ fit_nn_age <- NN_age %>% fit(list(Xfeat, Xexpo), Ylearn,
 
 ```
 
-In order to compare the outcomes, we look at the predictions for every age. In addition, we also considered each age as an individual factor an fit a GLM (plotted in black). When looking at the plot below, we see that the GAM captured the trend in the data well (plotted in blue). We see a decrease of claim frequency for increasing ages. This decrease stabalises around 40 to 50 years old, most likely since the children of these people learn to drive with their parent's car, and cause more accidents. At older ages, we see that the number of accidents increases again. The GLM, with each age its own factor, fluctuates sustantially at the end. This is most likely cause by the fact that we have fewer observations for older ages.
+In order to compare the outcomes, we look at the predictions for every age, see the figure below. In addition, we also considered each age as an individual factor and fit a GLM (plotted in black). When looking at the plot below, we see that the GAM captured the trend in the data well (plotted in blue). We see a decrease of claim frequency for increasing ages. This decrease stabalises around 40 to 50 years old, most likely since the children of these people learn to drive with their parent's car, and cause more accidents. At older ages, we see that the number of accidents increases again. The GLM, with each age its own factor, fluctuates sustantially at the end. This is most likely cause by the fact that we have fewer observations for older ages.
 
 The neural network (plotted in red), on the other hand, is able to point to the fact that claim frequency improves with age, but it may be too *simplistic*. The patterns throughout the ages is not captured.
 
@@ -161,16 +161,16 @@ ggplot(Comparison, aes(x = Age)) +
 
 ```
 
-This clearly illustrates that a classic neural network may not be best suited to model these problems. In the above example, the network was rather small. It could be possible that a larger network with more hidden layers and nodes in each layer will better capture the patterns in the data. One need to keep in mind, however, that this is not practical. A very large model takes much more time to fit and is harder to maintain, and this does not weight against the marginal gains that can be made compared to the already satisfactory results coming from the GAM. A simpler model makes it also easier to implement and use in practice, and it has the advantage that one can more easily play with the parameters to express a certain business goal set up by the insurance company, e.g., special discounts for certain groups^[This point will not be solved by moving to CANN models. This is better done by using a smart way of dividing all explanatory variables into factor variables. These are then used to model a GLM, like we did, with each factor variable having its own coefficient. For more details, we refer to [@henckaerts2021boosting]]. 
+This clearly illustrates that a classic neural network may not be best suited to model these problems. In the above example, the network was rather small. It could be possible that a larger network with more hidden layers and nodes in each layer will better capture the patterns in the data. One needs to keep in mind, however, that this is not practical. A very large model takes much more time to fit and is harder to maintain, and this does not weight against the marginal gains that can be made compared to the already satisfactory results coming from the GAM. A simpler model makes it also easier to implement and use in practice, and it has the advantage that one can more easily play with the parameters to express a certain business goal set up by the insurance company, e.g., special discounts for certain groups^[This point will not be solved by moving to CANN models. This is better done by using a smart way of dividing all explanatory variables into factor variables. These are then used to model a GLM, like we did, with each factor variable having its own coefficient. For more details, we refer to [@henckaerts2021boosting]]. 
 
 ### Moving to CANN's
-In order to solve some of the shortcomings, one can move to the Combined Actuarial Neural Network setting, as represented in [@schelldorfer2019nesting]. The idea here is to use the predictions coming from the more classical statistical models, like the GLM and GAM, and use them as a guide for the your network. This way, the network itself does not model the Poisson distribution itself, but the smaller patterns in the data, not picked up by the statistical model. This is done by introducing a so-called (non-trainable) skip connection to the neural network, illustrated below (source: [@schelldorfer2019nesting]). 
+In order to solve some of the shortcomings, one can move to the Combined Actuarial Neural Network setting, as represented in [@schelldorfer2019nesting]. The idea here is to use the predictions coming from the more classical statistical models, like the GLM and GAM, and use them as a guide for the your network. This way, the network itself does not model the full Poisson distribution itself, but the smaller patterns in the data, not picked up by the statistical model. This is done by introducing a so-called (non-trainable) skip connection to the neural network, illustrated below (source: [@schelldorfer2019nesting]). 
 
 ```{r, out.width="40%", echo = FALSE}
 knitr::include_graphics("Skip.png")
 ```
 
-This skip connection needs to be cleverly integrated into our network. We still assume the exponential activation in the final step in the network (to insure positivity of the predicted mean). The output of a classic neural network would then look like this:
+This skip connection needs to be cleverly integrated into our network. We still assume the exponential activation in the final step in the network (to insure positivity of the predicted mean). We also keep the linear activation function as before. The output of a classic neural network would then look like this:
 $$ \text{output} = \exp\left( \sum_i n_i w_i + b \right), $$
 where $n_i$ are the inputs from the previous layer, $w_i$ the weights corresponding to the connections, and $b$ is the bias term. In a previous step, we have taken the exposure into account like this:
 $$ \text{output} = \exp\left( \sum_i n_i w_i + b + \log(\text{expo}) \right). $$
@@ -245,24 +245,24 @@ In this part, we cover some basic concepts needed to build and evaluate the diff
 
 To start, we need to define some *loss function* to evaluate the performance of the model. Since we are dealing with count data, we want to take the characteristics of the distribution into account. In this paper, we always assume a Poisson distribution, hence we are going to use the Poisson deviance as our loss function. This is defined as follows: 
 $$ D^\text{Poisson}(\boldsymbol{y}, f_\text{predict}(\boldsymbol{x})) = \frac{2}{n}\sum_{i=1}^N \left( y_i \cdot \ln\left(\frac{y_i}{f_\text{predict}(x_i)}  \right) - \left(y_i-f_\text{predict}(x_i)\right) \right). $$
-This Poisson deviance expresses how much the model deviates from a model that just reproduces the data, i.e., you take the observed number of claims as the average number of claims for each policy holder. In the code below, we use 200 instead of 2 to better see the slight difference in deviance after the decimal point, since the differences can be minor. 
+This Poisson deviance expresses how much the model deviates from a model that just reproduces the data, where the latter takes the observed number of claims as the average number of claims for each policy holder. In the code below, we use 200 instead of 2 to better see the slight difference in deviance after the decimal point, since the differences can be minor. 
 
 ```{r poisdev}
 Poisson.Deviance <- function(pred, obs){200*(sum(pred)-sum(obs)+sum(log((obs/pred)^(obs))))/length(pred)}
 ```
 
-In order to better grasp the performance of the model on unseen data, we do a train test split. This way, we avoid selected a model that seems the best, but is just over fitting, and therefore is inferior to use on new data, and hence to underwrite new policies. 
+In order to better grasp the performance of the model on unseen data, we do a train test split. This way, we avoid selecting a model that seems the best, but is just over fitting, and therefore is inferior to use on new data, and hence to underwrite new policies. 
 
-Since the data is inherently skewed, we know there will be some extreme values. As we do not want these extreme values to be concentrated in either the train or test set, we apply a stratified way of doing this split. This insures that the distribution of claims is more or less the same in both the train and test set. We then implicitly assume that the distribution of future claims (train) will be similar to the past (test). In this paper, we explain it more generally, since this is how the code is built up. What is represented here can actually be used for stratified k-fold cross validation with only minor adaptations of the code. 
+Since the data is inherently skewed, we know there will be some extreme values. As we do not want these extreme values to be concentrated in either the train or test set, we apply a stratified way of doing this split. This insures that the distribution of claims is more or less the same in both the train and test set. We then implicitly assume that the distribution of future claims (test) will be similar to the past (train). In this paper, we explain it more generally, since this is how the code is built up. What is represented here can actually be used for stratified k-fold cross validation with only minor adaptations of the code. 
 
 The procedure consists of three main steps. 
 Firstly, we order all outcomes from largest to smallest according to the feature you are interested in. 
-$$ Y_{(1)}, Y_{(2)}, \ldots, Y_{(N)} $$
+$$ Y_{(1)}\geq Y_{(2)}\geq \ldots\geq Y_{(N)} $$
 Next, we construct $l =\lceil N/k \rceil$ different urns $\mathcal{U}_i$, where $\mathcal{U}_1$ contains the $k$ largest observations, $\mathcal{U}_2$ the next $k$ largest and so on. 
 
 Finally, the $k$ folds are constructed as 
 $$ \mathcal{D}_k = \left\{\text{pick randomly without replacement one case from each urn } \mathcal{U}_1, \ldots, \mathcal{U}_{\lceil N/k \rceil} \right\}. $$
-In our case, we take the training data to be $80\%$ of our full dataset. This is done by setting $k=10$, and recombining $\mathcal{D}_1,\ldots,\mathcal{D}_8$ into the training set and the last two folds into the test set. We only order on the number of claims reported, but it is possible to also take the exposure into account, or any other feature for that matter.
+In our case, we take the training data to be $80\%$ of our full dataset. This is done by setting $k=10$, and recombining $\mathcal{D}_1,\ldots,\mathcal{D}_8$ into the training set and the last two folds into the test set. We only order on the number of claims reported, but it is possible to also take the exposure into account, or any other feature for that matter (take `cov` in the code equal to a list of feature names, like `c("nclaims", "expo")`).
 
 The way it is implemented here, takes a long time to run. We advise the reader to look into more optimised ways of doing this. Nonetheless, the full code is available to use on <https://github.com/B-Deprez/CANN-Models/blob/main/stratify_train_test.R>.
 
@@ -294,7 +294,7 @@ mtpl_test <- stratified_train_test_split[[2]]
 
 ```
 
-The final piece of theory we need, concerns embedding layers for the categorical features. This is in contrast to a more brute force way of using one-hot encoding. When using one-hot encoding for features that have many levels (like the postal codes in our dataset), one creates a lot of extra features that need to be incorporated in the network. This results in a large sparse matrix. 
+The final piece of theory we need, concerns embedding layers for the categorical features. This is in contrast to a more brute force way of using [one-hot encoding](https://en.wikipedia.org/wiki/One-hot). When using one-hot encoding for features that have many levels (like the postal codes in our dataset), one creates a lot of extra features that need to be incorporated in the network. This results in a large sparse matrix. 
 
 Better results can be obtained by using embedding layers. These represent the factors by numerical coordinates in a low dimensional space. The two main advantages are that (1) the dimension is reduced and (2) similarities between factor levels can be examined. Where the Euclidean distance is always $\sqrt{2}$ between different levels when using one-hot encoding, the similarity between factors is represented by a smaller distance when using an embedding. 
 
@@ -307,13 +307,13 @@ knitr::include_graphics("Embed.png")
 We now have all the tools to dive into the full modelling of the claim counts in our dataset. 
 
 ## The Full Modelling Part
-We begin by reconsidering at the structure of our data. This will give us more insights in what to include doing the modelling. 
+We begin by reconsidering the structure of our data. This will give us more insights in what to include doing the modelling. 
 
 ```{r structure_again}
 str(mtpl_be)
 ```
 
-As a nice example, we consider a first visual check of the claim distribution in Belgium. Note that we have used a shapefile of Belgium where all postal codes are present. We first need to do some manipulation in order to only have the postal code regions. For this, we regroup all communities by the first two digits of their postal code. Once that is done, we rescale the average claim frequency by dividing by the area of the postal region. This is to reflect the population density, in a way. One claim in on a small area (say a street) is different than one claim over a large (maybe rural) area. 
+As a nice example, we consider a first visual check of the claim distribution in Belgium. Note that we have used a shapefile of Belgium where all postal codes are present. We first need to do some manipulation in order to only have the postal code regions. For this, we regroup all communities by the first two digits of their postal code. Once that is done, we rescale the average claim frequency by dividing by the area of the postal region. This is to reflect the population density in a way. One claim in on a small area (say a street) is different from one claim over a large (maybe rural) area. 
 
 To make it more visual, we divide everything into five different risk classes according to their quantiles. We note that the shapefile is a bit outdated, so we needed to downgrade the `sf` library to version 0.9-6 in order for everything to work properly. The reader is encouraged to look for a more recent shapefile. 
 
@@ -361,12 +361,12 @@ GAM_full <- gam(nclaims ~ coverage + s(ageph) + sex + s(bm) + s(power) +
                 data = mtpl_train, 
                 offset = log(expo), 
                 family = poisson(link = "log"))
-
-par(mfrow = c(2,2))
-plot(GAM_full, scale = 0)
 ```
 
 ```{r GAMRES}
+par(mfrow = c(2,2))
+plot(GAM_full, scale = 0)
+
 # Results from the GAM are our benchmark
 y_test_fullGAM <- GAM_full %>% predict(newdata = mtpl_test, type = "response")
 Poisson.Deviance(y_test_fullGAM, mtpl_test$nclaims)
@@ -669,7 +669,7 @@ FleetEmb = Fleet %>%
   layer_flatten(name = "Fleet_flat") 
 
 PcEmb = PostalCode %>%
-  layer_embedding(input_dim = NPc, output_dim = 1, input_length = 1, name = "PcEmb") %>%
+  layer_embedding(input_dim = NPc, output_dim = 2, input_length = 1, name = "PcEmb") %>%
   layer_flatten(name = "Pc_flat") 
 
 Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
@@ -698,6 +698,10 @@ fit_1 <- model_1 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, F
 y_pred_1 <- model_1 %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
 
 #Three layer network
+PcEmb = PostalCode %>%
+  layer_embedding(input_dim = NPc, output_dim = 1, input_length = 1, name = "PcEmb") %>%
+  layer_flatten(name = "Pc_flat") 
+
 Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
   layer_concatenate(name = 'concate') %>%
   layer_batch_normalization() %>%
@@ -745,7 +749,11 @@ knitr::kable(tibble(Total_claims, Total_GAM, Total_1, Total_3))
 
 We see that the CANN's give a better picture of the total number of expected claims in the portfolio. 
 
+As a final remark, the writer wants to mention that, initially, there was a small mistake in de fitting of the GAM. The exposure was used as an offset, not the logarithm of the exposure. This gave a Poisson deviance of around 68. In the end, however, the CANN was able to obtain a similar performance as the ones fitted here. This also shows the strength of the neural networks when they are used as a way of correcting the output of another model, and not as the full model itself. 
+
+This last example also shows that this way of programming, with skip connections, could help enhance human judgment. The initial approximation of a domain expert could be used as the base prediction (in the skip connection), and the neural network is trained to tweak these initial educated guesses by leveraging hidden interactions and patterns hidden in the data.
+
 # Conclusion
-In this paper, we have looked a one way of including neural networks into actuarial problems. First, we saw why special care needs to be taken when doing this. We presented how Combined Actuarial Neural Networks can be implemented, and illustrated the results one a Belgian motor third party liability insurance. We saw that we got superior results compared to more classical, statistical techniques like the GAM. 
+In this paper, we have looked at one way of including neural networks into actuarial problems. First, we saw why special care needs to be taken when doing this. We presented how Combined Actuarial Neural Networks, or CANN's for short, can be implemented, and illustrated the results on a Belgian motor third party liability insurance. We saw that we got superior results compared to more classical, statistical techniques like the GAM. 
 
 # References
