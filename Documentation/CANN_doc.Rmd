@@ -2,7 +2,9 @@
 title: "CANN-Models Applied to a Belgian MTPL Dataset"
 author: "Bruno Deprez"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 bibliography: Bibliography.bib
 ---
 
@@ -49,7 +51,8 @@ library(keras)
 mtpl_be <- maidrr::mtpl_be #the MTPL data set used here
 postal_codes <- read_excel("../inspost.xls")
 
-belgium_shape_sf <- st_read('../shape file Belgie postcodes/npc96_region_Project1.shp', quiet = TRUE)
+belgium_shape_sf <- st_read('../shape file Belgie postcodes/npc96_region_Project1.shp', 
+                            quiet = TRUE)
 belgium_shape_sf <- st_transform(belgium_shape_sf, CRS("+proj=longlat +datum=WGS84")) 
 ```
 
@@ -135,8 +138,8 @@ factor_age <- glm(nclaims ~ factor(ageph)-1,
 XTest <- (min(mtpl_be$ageph)+1):max(mtpl_be$ageph)
 ExpoTest <- rep(1, length(XTest)) #only yearly average claim count
 
-y_fit_factor <- predict(factor_age, 
-                        newdata = data.frame(ageph = XTest, expo = 1), 
+y_fit_factor <- predict(factor_age,
+                        newdata = data.frame(ageph = XTest, expo = 1),
                         type = "response")
 
 y_fit_NN <- predict(NN_age, 
@@ -212,15 +215,19 @@ The plot from before then becomes:
 XTest <- (min(mtpl_be$ageph)+1):max(mtpl_be$ageph)
 ExpoTest <- rep(1, length(XTest))
 
-y_fit_factor <- predict(factor_age, newdata = data.frame(ageph = XTest, expo = 1), 
+y_fit_factor <- predict(factor_age, 
+                        newdata = data.frame(ageph = XTest, expo = 1), 
                         type = "response")
 
-y_fit_GAM <- predict(GAM_age, newdata = data.frame(ageph = XTest, expo = 1), 
+y_fit_GAM <- predict(GAM_age, 
+                     newdata = data.frame(ageph = XTest, expo = 1), 
                      type = "response")
 
-y_fit_CANN <- predict(CANN_age, list(XTest, 
-                                     predict(GAM_age, 
-                                                    newdata = data.frame(ageph = XTest, expo = 1))))
+y_fit_CANN <- predict(CANN_age, 
+                      list(XTest,
+                           predict(GAM_age,
+                                   newdata = data.frame(ageph = XTest,
+                                                        expo = 1))))
 
 Comparison <- tibble(Age = XTest, 
                      GAM = y_fit_GAM, 
@@ -248,7 +255,9 @@ $$ D^\text{Poisson}(\boldsymbol{y}, f_\text{predict}(\boldsymbol{x})) = \frac{2}
 This Poisson deviance expresses how much the model deviates from a model that just reproduces the data, where the latter takes the observed number of claims as the average number of claims for each policy holder. In the code below, we use 200 instead of 2 to better see the slight difference in deviance after the decimal point, since the differences can be minor. 
 
 ```{r poisdev}
-Poisson.Deviance <- function(pred, obs){200*(sum(pred)-sum(obs)+sum(log((obs/pred)^(obs))))/length(pred)}
+Poisson.Deviance <- function(pred, obs){
+  200*(sum(pred)-sum(obs)+sum(log((obs/pred)^(obs))))/length(pred)
+  }
 ```
 
 In order to better grasp the performance of the model on unseen data, we do a train test split. This way, we avoid selecting a model that seems the best, but is just over fitting, and therefore is inferior to use on new data, and hence to underwrite new policies. 
@@ -279,8 +288,10 @@ stratify_train_test <- function(df_input, cov, p=0.8, k = 10){
       df_strat_train<- selected_rows[permutation[1:(k*p)],]
       df_strat_test <- selected_rows[permutation[(k*p+1):length(permutation)],]
     }else if((k*p+1)<=length(permutation)){ 
-      df_strat_train <- rbind(df_strat_train, selected_rows[permutation[1:(k*p)],])
-      df_strat_test <- rbind(df_strat_test, selected_rows[permutation[(k*p+1):length(permutation)],])
+      df_strat_train <- rbind(df_strat_train, 
+                              selected_rows[permutation[1:(k*p)],])
+      df_strat_test <- rbind(df_strat_test,
+                             selected_rows[permutation[(k*p+1):length(permutation)],])
     }else{ #If not enough observations in the end => put all in training set
       df_strat_train <- rbind(df_strat_train, selected_rows)
     }
@@ -475,18 +486,22 @@ for(i in 1:2){ #Embedding dimensions
       layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
                   weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
     
-    model_tune <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
-                         outputs = c(Response))
+    model_tune <- keras_model(
+      inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
+      outputs = c(Response))
     
     model_tune %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
     
-    fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
-                    Ylearn, 
-                    epochs = 20, 
-                    batch_size = 1718, 
-                    verbose = 0)
+    fit_tune <- model_tune %>% fit(
+      list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
+      Ylearn, 
+      epochs = 20, 
+      batch_size = 1718, 
+      verbose = 0)
     
-    y_test <- model_tune %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
+    y_test <- model_tune %>% predict(
+      list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest)
+      )
     pois_dev <- Poisson.Deviance(y_test, mtpl_test$nclaims)
     print(pois_dev)
     Tune_1 <- Tune_1 %>% add_row(emb_dim = i, l_1 = l_1,pois_dev =pois_dev)
@@ -557,18 +572,23 @@ for(i in 1:2){ #Embedding dimensions
           layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
                       weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
         
-        model_tune <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
-                                  outputs = c(Response))
+        model_tune <- keras_model(
+          inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
+          outputs = c(Response))
         
         model_tune %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
         
-        fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
-                                       Ylearn, 
-                                       epochs = 20, 
-                                       batch_size = 1718, 
-                                       verbose = 0)
+        fit_tune <- model_tune %>% fit(
+          list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, 
+               FleetLearn, PcLearn, Vlearn),
+          Ylearn, 
+          epochs = 20, 
+          batch_size = 1718, 
+          verbose = 0)
         
-        y_test <- model_tune %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
+        y_test <- model_tune %>% predict(
+          list(XTest, CovTest, SexTest, FuelTest, UseTest, 
+               FleetTest, PcTest, VTest))
         pois_dev <- Poisson.Deviance(y_test, mtpl_test$nclaims)
         print(pois_dev)
         Tune_3 <- Tune_3 %>% add_row(emb_dim = i, 
@@ -684,18 +704,22 @@ Response <- list(Network, LogGAM) %>% layer_add(name='Add') %>%
   layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
               weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
 
-model_1 <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
-                          outputs = c(Response))
+model_1 <- keras_model(
+  inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
+  outputs = c(Response))
 
 model_1 %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
 
-fit_1 <- model_1 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
-                         Ylearn, 
-                         epochs = 30,
-                         batch_size = 1718,
-                         verbose = 0)
+fit_1 <- model_1 %>% fit(
+  list(Xlearn, CovLearn, SexLearn, FuelLearn, 
+       UseLearn, FleetLearn, PcLearn, Vlearn),
+  Ylearn, 
+  epochs = 30,
+  batch_size = 1718,
+  verbose = 0)
 
-y_pred_1 <- model_1 %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
+y_pred_1 <- model_1 %>% predict(
+  list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
 
 #Three layer network
 PcEmb = PostalCode %>%
@@ -720,18 +744,22 @@ Response <- list(Network, LogGAM) %>% layer_add(name='Add') %>%
   layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
               weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
 
-model_3 <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
-                          outputs = c(Response))
+model_3 <- keras_model(
+  inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
+  outputs = c(Response))
 
 model_3 %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
 
-fit_3 <- model_3 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
-                         Ylearn,
-                         epochs = 30, 
-                         batch_size = 1718,
-                         verbose = 0)
+fit_3 <- model_3 %>% fit(
+  list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn,
+       FleetLearn, PcLearn, Vlearn),
+  Ylearn,
+  epochs = 30, 
+  batch_size = 1718,
+  verbose = 0)
 
-y_pred_3 <- model_3 %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
+y_pred_3 <- model_3 %>% predict(
+  list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
 
 # Total claims predicted
 Total_claims <- sum(mtpl_test$nclaims)
