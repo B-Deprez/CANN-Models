@@ -1,5 +1,5 @@
 ---
-title: "CANN_Models Applied to a Belgian MTPL Dataset"
+title: "CANN-Models Applied to a Belgian MTPL Dataset"
 author: "Bruno Deprez"
 date: "`r Sys.Date()`"
 output: html_document
@@ -68,7 +68,8 @@ knitr::include_graphics("2_digit_postcode_belgique.png")
 ```
 
 ## Modelling Claim Count Using Age
-To illustrate the inherent flaw of a neural network when dealing with actuarial problems, we begin with a small model where the age of the policy holder is used to determine the risk, i.e., the expected number of claims. Since we are dealing with claim counts, we assume that it follows a Poisson distribution. This distributional assumption is used to apply a generalised additive model (hereinafter "GAM") to model the expected number of claims via:
+### A First Try
+To illustrate the inherent flaw of a neural network when dealing with actuarial problems, we begin with a small model where the age of the policy holder is used to determine the risk, i.e., the expected number of claims^[This example is inspired by <https://katrienantonio.github.io/hands-on-machine-learning-R-module-3/sheets/ML_part3.html#94>]. Since we are dealing with claim counts, we assume that it follows a Poisson distribution. This distributional assumption is used to apply a generalised additive model (hereinafter "GAM") to model the expected number of claims via:
 $$ \mathbb{E}(Y_i) = d_i\cdot\exp\left(\beta_0 + f_1(\text{age}_i)\right) $$
 Note that we use the exponential function to insure positivity of the mean, and that we have also incorporated the exposure, denoted by $d_i$. The function $f_1$ is a *smoother*, which in our case is equal to a thin plate spline. A full understanding of this is not necessary to follow the rest of the text. 
 
@@ -119,8 +120,127 @@ fit_nn_age <- NN_age %>% fit(list(Xfeat, Xexpo), Ylearn,
 
 ```
 
-In order to compare the outcomes, we look at the predictions for every age. In addition, we also considered each age as an individual factor an fit a GLM. When looking at the plot below, we see that the GAM captured the trend in the data well. We see a decrease of claim frequency for increasing ages. This decrease stabalises around 40 to 50 years old, most likely since the children of these people learn to drive with their parent's car, and cause more accidents. 
+In order to compare the outcomes, we look at the predictions for every age. In addition, we also considered each age as an individual factor an fit a GLM (plotted in black). When looking at the plot below, we see that the GAM captured the trend in the data well (plotted in blue). We see a decrease of claim frequency for increasing ages. This decrease stabalises around 40 to 50 years old, most likely since the children of these people learn to drive with their parent's car, and cause more accidents. At older ages, we see that the number of accidents increases again. The GLM, with each age its own factor, fluctuates sustantially at the end. This is most likely cause by the fact that we have fewer observations for older ages.
 
-The neural network, on the other hand, is able to point to the fact that claim frequency improves with age, but it may be too *simplistic*. The patterns throughout the ages is not captured.
+The neural network (plotted in red), on the other hand, is able to point to the fact that claim frequency improves with age, but it may be too *simplistic*. The patterns throughout the ages is not captured.
+
+Note that the plot shows the *yearly* average claim count predicted by the model, since we say that for each age we consider, the exposure is equal to 1 (year). We did not include the age of 18 in the plot, since the prediction for that factor in the GLM were very large. The underlying pattern for the other ages were not well visible due to the large scale needed on the y-axis. 
+
+```{r plot_nn_gam_glm}
+factor_age <- glm(nclaims ~ factor(ageph)-1, 
+                  offset = log(expo), 
+                  data = mtpl_be, 
+                  family = poisson(link="log"))
+
+XTest <- (min(mtpl_be$ageph)+1):max(mtpl_be$ageph)
+ExpoTest <- rep(1, length(XTest)) #only yearly average claim count
+
+y_fit_factor <- predict(factor_age, 
+                        newdata = data.frame(ageph = XTest, expo = 1), 
+                        type = "response")
+
+y_fit_NN <- predict(NN_age, 
+                    list(XTest, log(ExpoTest)))
+
+y_fit_GAM <- predict(GAM_age, 
+                     newdata = data.frame(ageph = XTest, expo = 1), 
+                     type = "response")
+
+Comparison <- tibble(Age = XTest, 
+                     GAM = y_fit_GAM, 
+                     NN = y_fit_NN, 
+                     factors = y_fit_factor)
+
+ggplot(Comparison, aes(x = Age)) +
+  geom_line(aes(y= GAM), color = "blue") +
+  geom_line(aes(y= NN), color = "red") +
+  geom_line(aes(y= factors))+
+  ylab("Response") +
+  ggtitle("Difference between GAM and Neural Network")+
+  theme_bw()
+
+```
+
+This clearly illustrates that a classic neural network may not be best suited to model these problems. In the above example, the network was rather small. It could be possible that a larger network with more hidden layers and nodes in each layer will better capture the patterns in the data. One need to keep in mind, however, that this is not practical. A very large model takes much more time to fit and is harder to maintain, and this does not weight against the marginal gains that can be made compared to the already satisfactory results coming from the GAM. A simpler model makes it also easier to implement and use in practice, and it has the advantage that one can more easily play with the parameters to express a certain business goal set up by the insurance company, e.g., special discounts for certain groups^[This point will not be solved by moving to CANN models. This is better done by using a smart way of dividing all explanatory variables into factor variables. These are then used to model a GLM, like we did, with each factor variable having its own coefficient. For more details, we refer to [@henckaerts2021boosting]]. 
+
+### Moving to CANN's
+In order to solve some of the shortcomings, one can move to the Combined Actuarial Neural Network setting, as represented in [@schelldorfer2019nesting]. The idea here is to use the predictions coming from the more classical statistical models, like the GLM and GAM, and use them as a guide for the your network. This way, the network itself does not model the Poisson distribution itself, but the smaller patterns in the data, not picked up by the statistical model. This is done by introducing a so-called (non-trainable) skip connection to the neural network, illustrated below (source: [@schelldorfer2019nesting]). 
+
+```{r, out.width="40%", echo = FALSE}
+knitr::include_graphics("Skip.png")
+```
+
+This skip connection needs to be cleverly integrated into our network. We still assume the exponential activation in the final step in the network (to insure positivity of the predicted mean). The output of a classic neural network would then look like this:
+$$ \text{output} = \exp\left( \sum_i n_i w_i + b \right), $$
+where $n_i$ are the inputs from the previous layer, $w_i$ the weights corresponding to the connections, and $b$ is the bias term. In a previous step, we have taken the exposure into account like this:
+$$ \text{output} = \exp\left( \sum_i n_i w_i + b + \log(\text{expo}) \right). $$
+The trick is now to use the skip connection as a first base prediction, and incorporate this into the output as well. We do this again by using the logarithm. We get the following:
+$$ \text{output} = \exp\left( \sum_i n_i w_i + b + \log(\text{expo}) + \log(\text{base}) \right) = \text{expo}\cdot\text{base}\cdot\exp\left( \sum_i n_i w_i + b \right). $$
+How to do this in `R` is illustrated below. We recycle the GAM from before to use as our base model. Note that we do **not** include `type = "response"` in the predict function. This way, we already have the logarithm of the predicted average claims. We also add the logarithm of the exposure, like in the equation above.
+```{r CANN}
+#CANN
+set.seed(1997)
+Vlearn2 <- as.matrix(predict(GAM_age) + log(mtpl_be$expo)) #You include exposure
+LogGAM <- layer_input(shape = c(1),   dtype = 'float32', name = 'LogGAM')
+
+Design2 <- layer_input(shape = c(1), dtype = "float32", name = "Design2")
+
+Network2 <- Design2 %>%
+  layer_batch_normalization() %>%
+  layer_dense(units = 5, activation = 'tanh', name = 'hidden2_1') %>%
+  layer_dense(units = 1, activation = 'linear', name = 'Network2')
+
+Response2 <- list(Network2, LogGAM) %>%
+  layer_add(name= "Add2") %>%
+  layer_dense(units=1, activation="exponential", name = 'Response2', trainable=FALSE,
+              weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
+
+CANN_age <- keras_model(inputs = c(Design2, LogGAM), 
+                        outputs = c(Response2))
+
+CANN_age %>% compile(optimizer = optimizer_rmsprop(), 
+                     loss = "poisson")
+
+CANN_age%>% fit(list("Design2" = Xfeat, "LogGAM"=Vlearn2), Ylearn, 
+                                epochs = 25, 
+                                batch_size = 1718, 
+                                verbose = 0)
+```
+
+The plot from before then becomes:
+```{r CANN_Base}
+XTest <- (min(mtpl_be$ageph)+1):max(mtpl_be$ageph)
+ExpoTest <- rep(1, length(XTest))
+
+y_fit_factor <- predict(factor_age, newdata = data.frame(ageph = XTest, expo = 1), 
+                        type = "response")
+
+y_fit_GAM <- predict(GAM_age, newdata = data.frame(ageph = XTest, expo = 1), 
+                     type = "response")
+
+y_fit_CANN <- predict(CANN_age, list(XTest, 
+                                     predict(GAM_age, 
+                                                    newdata = data.frame(ageph = XTest, expo = 1))))
+
+Comparison <- tibble(Age = XTest, 
+                     GAM = y_fit_GAM, 
+                     CANN = y_fit_CANN, 
+                     factors = y_fit_factor)
+
+ggplot(Comparison, aes(x = Age)) +
+  geom_line(aes(y= GAM), color = "blue") +
+  geom_line(aes(y= CANN), color = "darkgreen")+
+  geom_line(aes(y= factors))+
+  ylab("Response") +
+  ggtitle("Difference between GAM and CANN")+
+  theme_bw()
+
+```
+
+It may not be highly visible here, but the CANN has made some correction to the GAM. Here, we see that this is rather small. The true power will become clear later in this document, when we model the claim count with all variables. Using a neural network like this will allow us to incorporate interactions between the different variables that are not captured by the GAM. This makes it also much easier to incorporate these interactions. You can define interactions when fitting the GAM, but then you need to specify each one explicitly, which can take a lot of trial and error to incorporate the right ones, and only the right ones. In addition, the neural network captures interactions that may not be of a multiplicative nature, which is much harder to do with a GAM or GLM. Let's see all this in practice in the next section. 
+
+# Modelling the Full Dataset
+## Some theory
+
 
 # References
