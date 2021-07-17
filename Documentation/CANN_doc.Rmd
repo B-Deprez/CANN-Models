@@ -245,8 +245,462 @@ In this part, we cover some basic concepts needed to build and evaluate the diff
 
 To start, we need to define some *loss function* to evaluate the performance of the model. Since we are dealing with count data, we want to take the characteristics of the distribution into account. In this paper, we always assume a Poisson distribution, hence we are going to use the Poisson deviance as our loss function. This is defined as follows: 
 $$ D^\text{Poisson}(\boldsymbol{y}, f_\text{predict}(\boldsymbol{x})) = \frac{2}{n}\sum_{i=1}^N \left( y_i \cdot \ln\left(\frac{y_i}{f_\text{predict}(x_i)}  \right) - \left(y_i-f_\text{predict}(x_i)\right) \right). $$
-This Poisson deviance expresses how much the model deviates from a model that just reproduces the data, i.e., you take the observed number of claims as the average number of claims for each policy holder.
+This Poisson deviance expresses how much the model deviates from a model that just reproduces the data, i.e., you take the observed number of claims as the average number of claims for each policy holder. In the code below, we use 200 instead of 2 to better see the slight difference in deviance after the decimal point, since the differences can be minor. 
 
-In order to better grasp the performance of the model on unseen data, we do a train test split. 
+```{r poisdev}
+Poisson.Deviance <- function(pred, obs){200*(sum(pred)-sum(obs)+sum(log((obs/pred)^(obs))))/length(pred)}
+```
+
+In order to better grasp the performance of the model on unseen data, we do a train test split. This way, we avoid selected a model that seems the best, but is just over fitting, and therefore is inferior to use on new data, and hence to underwrite new policies. 
+
+Since the data is inherently skewed, we know there will be some extreme values. As we do not want these extreme values to be concentrated in either the train or test set, we apply a stratified way of doing this split. This insures that the distribution of claims is more or less the same in both the train and test set. We then implicitly assume that the distribution of future claims (train) will be similar to the past (test). In this paper, we explain it more generally, since this is how the code is built up. What is represented here can actually be used for stratified k-fold cross validation with only minor adaptations of the code. 
+
+The procedure consists of three main steps. 
+Firstly, we order all outcomes from largest to smallest according to the feature you are interested in. 
+$$ Y_{(1)}, Y_{(2)}, \ldots, Y_{(N)} $$
+Next, we construct $l =\lceil N/k \rceil$ different urns $\mathcal{U}_i$, where $\mathcal{U}_1$ contains the $k$ largest observations, $\mathcal{U}_2$ the next $k$ largest and so on. 
+
+Finally, the $k$ folds are constructed as 
+$$ \mathcal{D}_k = \left\{\text{pick randomly without replacement one case from each urn } \mathcal{U}_1, \ldots, \mathcal{U}_{\lceil N/k \rceil} \right\}. $$
+In our case, we take the training data to be $80\%$ of our full dataset. This is done by setting $k=10$, and recombining $\mathcal{D}_1,\ldots,\mathcal{D}_8$ into the training set and the last two folds into the test set. We only order on the number of claims reported, but it is possible to also take the exposure into account, or any other feature for that matter.
+
+The way it is implemented here, takes a long time to run. We advise the reader to look into more optimised ways of doing this. Nonetheless, the full code is available to use on <https://github.com/B-Deprez/CANN-Models/blob/main/stratify_train_test.R>.
+
+```{r stratTrainTest, eval = FALSE}
+stratify_train_test <- function(df_input, cov, p=0.8, k = 10){
+  #Set k and p to have a round amount of bins
+  df_to_split <- df_input %>%
+    dplyr::arrange(desc(df_input[cov]))
+  l = ceiling(nrow(df_to_split)/k)
+  for(i in 1:l){
+    selected_rows <- df_to_split[((i-1)*k+1):min((i*k),nrow(df_to_split)),]
+    permutation <- sample(min(k, nrow(df_to_split)-(i-1)*k))
+    if(i == 1){ #First time through loop => initialise 
+      df_strat_train<- selected_rows[permutation[1:(k*p)],]
+      df_strat_test <- selected_rows[permutation[(k*p+1):length(permutation)],]
+    }else if((k*p+1)<=length(permutation)){ 
+      df_strat_train <- rbind(df_strat_train, selected_rows[permutation[1:(k*p)],])
+      df_strat_test <- rbind(df_strat_test, selected_rows[permutation[(k*p+1):length(permutation)],])
+    }else{ #If not enough observations in the end => put all in training set
+      df_strat_train <- rbind(df_strat_train, selected_rows)
+    }
+  }
+  return(list(df_strat_train, df_strat_test))
+}
+
+stratified_train_test_split <- stratify_train_test(mtpl_be, c("nclaims"))
+mtpl_train <- stratified_train_test_split[[1]]
+mtpl_test <- stratified_train_test_split[[2]]
+
+```
+
+The final piece of theory we need, concerns embedding layers for the categorical features. This is in contrast to a more brute force way of using one-hot encoding. When using one-hot encoding for features that have many levels (like the postal codes in our dataset), one creates a lot of extra features that need to be incorporated in the network. This results in a large sparse matrix. 
+
+Better results can be obtained by using embedding layers. These represent the factors by numerical coordinates in a low dimensional space. The two main advantages are that (1) the dimension is reduced and (2) similarities between factor levels can be examined. Where the Euclidean distance is always $\sqrt{2}$ between different levels when using one-hot encoding, the similarity between factors is represented by a smaller distance when using an embedding. 
+
+We take the example from [@schelldorfer2019nesting]. Below, one can clearly see that, after embedding, car brand B1 and B3 are very similar, while brand B12 is very dissimilar from all the rest. This will come in handy in for our dataset, where we want to capture similarities in claim frequency amongst the different postal regions (cities, rural areas etc.). 
+
+```{r, out.width="40%", echo = FALSE}
+knitr::include_graphics("Embed.png")
+```
+
+We now have all the tools to dive into the full modelling of the claim counts in our dataset. 
+
+## The Full Modelling Part
+We begin by reconsidering at the structure of our data. This will give us more insights in what to include doing the modelling. 
+
+```{r structure_again}
+str(mtpl_be)
+```
+
+As a nice example, we consider a first visual check of the claim distribution in Belgium. Note that we have used a shapefile of Belgium where all postal codes are present. We first need to do some manipulation in order to only have the postal code regions. For this, we regroup all communities by the first two digits of their postal code. Once that is done, we rescale the average claim frequency by dividing by the area of the postal region. This is to reflect the population density, in a way. One claim in on a small area (say a street) is different than one claim over a large (maybe rural) area. 
+
+To make it more visual, we divide everything into five different risk classes according to their quantiles. We note that the shapefile is a bit outdated, so we needed to downgrade the `sf` library to version 0.9-6 in order for everything to work properly. The reader is encouraged to look for a more recent shapefile. 
+
+```{r shape}
+post_claim <- mtpl_be %>% group_by(postcode) %>% summarize(num = n(), 
+                                                            mean_claim = mean(nclaims))
+belgium_shape_sf_grouped <- belgium_shape_sf %>% 
+  mutate(codpos = as.factor(floor(POSTCODE/100))) %>%
+  group_by(codpos) %>%
+  summarise(geometry = st_union(geometry),
+            Shape_Area = sum(Shape_Area)) %>%
+  left_join(post_claim, 
+            by = c("codpos" = "postcode"))
+
+belgium_shape_sf_grouped$freq <- 
+  belgium_shape_sf_grouped$mean_claim/belgium_shape_sf_grouped$Shape_Area
+belgium_shape_sf_grouped$freq_class <- cut(belgium_shape_sf_grouped$freq, 
+                                   breaks = quantile(belgium_shape_sf_grouped$freq, 
+                                                     c(0,0.20, 0.4,0.6,0.8,1), 
+                                                     na.rm = TRUE),
+                                   right = FALSE, include.lowest = TRUE, 
+                                   labels = c("low", "average-low", "average", 
+                                              "average-high", "high"))
+map_freq <- ggplot(belgium_shape_sf_grouped) +
+  geom_sf(aes(fill = freq_class), size = 0) +
+  ggtitle("Claim frequency data") +
+  scale_fill_brewer(palette = "Blues", na.value = "white") + 
+  labs(fill = "Relative\nclaim fequency") +
+  theme_bw();map_freq
+
+```
+
+We can clearly see that most claims are reported in more urbanised areas (Bruges, Ghent, Antwerp, Brussels, Liège), where there is more traffic, while very few claims are reported in less densely populated areas (the Ardennes, the Kempen, and the region around Diksmuide).
+
+Finally, we move to the modelling part. We begin by fitting a GAM model, which will be used as our base-line model. We visualise the smoothers and calculate the Poisson deviance for this model. Note that the age smoother is similar to the one whe had before. 
+
+```{r load_data, include=FALSE}
+load("../.RData")
+```
+
+```{r full_GAM}
+## GAM
+GAM_full <- gam(nclaims ~ coverage + s(ageph) + sex + s(bm) + s(power) + 
+                  s(agec) + fuel + use + fleet + postcode, 
+                data = mtpl_train, 
+                offset = log(expo), 
+                family = poisson(link = "log"))
+
+par(mfrow = c(2,2))
+plot(GAM_full, scale = 0)
+
+# Results from the GAM are our benchmark
+y_test_fullGAM <- GAM_full %>% predict(newdata = mtpl_test, type = "response")
+Poisson.Deviance(y_test_fullGAM, mtpl_test$nclaims)
+```
+
+Hence, the reference Poisson deviance is equal to `r Poisson.Deviance(y_test_fullGAM, mtpl_test$nclaims)`.
+
+Next, we do some parameter tuning when building our CANN model. We consider both a one and two dimensional embedding for the postal code regions. We also consider neural networks with either 1 or 3 hidden layers. These hidden layers can either have 5, 10 or 15 neurons.  For the one with one hidden layer, we also tune the activation function, something we don't do for the three hidden layers, since this would have taken too long for this small paper. 
+
+Note that we initialise most of the layers every time we consider a new set of hyperparameters. This is done to make sure that the fitting of the model does not start in the *optimal* point of the previous optimisation. 
+
+```{r tune_1, eval = FALSE}
+## CANN
+# We use embeddings for the factor varaibles
+non_cat <- c(5, 7:9)
+n0 <- length(non_cat)
+
+Xlearn <- as.matrix(mtpl_train[,non_cat])
+Vlearn <- as.matrix(predict(GAM_full) + log(mtpl_train$expo))
+
+CovLearn <- as.matrix(as.integer(mtpl_train$coverage))-1
+NCov <- length(unique(CovLearn))
+SexLearn <- as.matrix(as.integer(mtpl_train$sex))-1
+NSex <- length(unique(SexLearn))
+FuelLearn <- as.matrix(as.integer(mtpl_train$fuel))-1
+NFuel <- length(unique(FuelLearn))
+UseLearn <- as.matrix(as.integer(mtpl_train$use))-1
+NUse <- length(unique(UseLearn))
+FleetLearn <- as.matrix(as.integer(mtpl_train$fleet))-1
+NFleet <- length(unique(FleetLearn))
+PcLearn <- as.matrix(as.integer(mtpl_train$postcode))-1
+NPc <- length(unique(PcLearn))
+
+XTest <- as.matrix(mtpl_test[,non_cat])
+VTest <- as.matrix(predict(GAM_full, newdata = mtpl_test) + log(mtpl_test$expo))
+
+CovTest <- as.matrix(as.integer(mtpl_test$coverage))-1
+SexTest <- as.matrix(as.integer(mtpl_test$sex))-1
+FuelTest <- as.matrix(as.integer(mtpl_test$fuel))-1
+UseTest <- as.matrix(as.integer(mtpl_test$use))-1
+FleetTest <- as.matrix(as.integer(mtpl_test$fleet))-1
+PcTest <- as.matrix(as.integer(mtpl_test$postcode))-1
+
+Ylearn <- as.matrix(mtpl_train$nclaims)
+
+Design <- layer_input(shape = c(n0), dtype = 'float32', name = 'Design')
+
+LogGAM <- layer_input(shape = c(1),   dtype = 'float32', name = 'LogGAM')
+
+Coverage <- layer_input(shape = c(1), dtype = 'int32', name = 'Coverage')
+Sex <- layer_input(shape = c(1), dtype = 'int32', name = 'Sex')
+Fuel <- layer_input(shape = c(1), dtype = 'int32', name = 'Fuel')
+Usage <- layer_input(shape = c(1), dtype = 'int32', name = 'Usage')
+Fleet <- layer_input(shape = c(1), dtype = 'int32', name = 'Fleet')
+PostalCode <- layer_input(shape = c(1), dtype = 'int32', name = 'PostalCode')
+
+num_layers <- c(1,3)
+num_neurons <- c(5,10,15)
+activ <- c("relu", "tanh")
+
+grid_nn <- expand_grid(num_neurons, activ)
+
+## With 1 layer
+
+Tune_1 <- tibble(emb_dim = integer(), 
+                 l_1 = integer(), 
+                 pois_dev = numeric())
+
+for(i in 1:2){ #Embedding dimensions
+  # We repeat all layers, so they are initialised, and training doesn't start
+  # in the optimal position of previous one
+  CovEmb = Coverage %>%
+    layer_embedding(input_dim = NCov, output_dim = 2, input_length = 1, name = "CovEmb") %>%
+    layer_flatten(name = "Cov_flat") 
+  
+  SexEmb = Sex %>%
+    layer_embedding(input_dim = NSex, output_dim = 1, input_length = 1, name = "SexEmb") %>%
+    layer_flatten(name = "Sex_flat") 
+  
+  FuelEmb = Fuel %>%
+    layer_embedding(input_dim = NFuel, output_dim = 1, input_length = 1, name = "FuelEmb") %>%
+    layer_flatten(name = "Fuel_flat") 
+  
+  UsageEmb = Usage %>%
+    layer_embedding(input_dim = NUse, output_dim = 1, input_length = 1, name = "UsageEmb") %>%
+    layer_flatten(name = "Usage_flat") 
+  
+  FleetEmb = Fleet %>%
+    layer_embedding(input_dim = NFleet, output_dim = 1, input_length = 1, name = "FleetEmb") %>%
+    layer_flatten(name = "Fleet_flat") 
+  
+  PcEmb = PostalCode %>%
+    layer_embedding(input_dim = NPc, output_dim = i, input_length = 1, name = "PcEmb") %>%
+    layer_flatten(name = "Pc_flat") 
+  
+  for(l_1 in 1:(dim(grid_nn)[1])){
+    Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
+      layer_concatenate(name = 'concate') %>%
+      layer_batch_normalization() %>%
+      layer_dense(units=as.numeric(grid_nn[l_1, 1]), 
+                  activation=as.character(grid_nn[l_1,2]), 
+                  name='hidden1')%>%
+      layer_dense(units=1, activation='linear', name='Network')
+    
+    Response <- list(Network, LogGAM) %>% layer_add(name='Add') %>% 
+      layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
+                  weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
+    
+    model_tune <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
+                         outputs = c(Response))
+    
+    model_tune %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
+    
+    fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
+                    Ylearn, 
+                    epochs = 20, 
+                    batch_size = 1718, 
+                    verbose = 0)
+    
+    y_test <- model_tune %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
+    pois_dev <- Poisson.Deviance(y_test, mtpl_test$nclaims)
+    print(pois_dev)
+    Tune_1 <- Tune_1 %>% add_row(emb_dim = i, l_1 = l_1,pois_dev =pois_dev)
+  }
+}
+```
+
+```{r result1}
+Result1 <- Tune_1 %>% 
+  filter(pois_dev == min(pois_dev)) %>%
+  mutate(number_neurons = as.numeric(grid_nn[l_1, 1]),
+         activation = as.character(grid_nn[l_1, 2])); Result1
+```
+
+```{r tune3, eval = FALSE}
+# 3 hidden layers
+Tune_3 <- tibble(emb_dim = integer(), 
+                 l_1 = integer(), 
+                 l_2 = integer(), 
+                 l_3 = integer(), 
+                 pois_dev = numeric())
+
+for(i in 1:2){ #Embedding dimensions
+  # We repeat all layers, so they are initialised, and training doesn't start
+  # in the optimal position of previous one
+  CovEmb = Coverage %>%
+    layer_embedding(input_dim = NCov, output_dim = 2, input_length = 1, name = "CovEmb") %>%
+    layer_flatten(name = "Cov_flat") 
+  
+  SexEmb = Sex %>%
+    layer_embedding(input_dim = NSex, output_dim = 1, input_length = 1, name = "SexEmb") %>%
+    layer_flatten(name = "Sex_flat") 
+  
+  FuelEmb = Fuel %>%
+    layer_embedding(input_dim = NFuel, output_dim = 1, input_length = 1, name = "FuelEmb") %>%
+    layer_flatten(name = "Fuel_flat") 
+  
+  UsageEmb = Usage %>%
+    layer_embedding(input_dim = NUse, output_dim = 1, input_length = 1, name = "UsageEmb") %>%
+    layer_flatten(name = "Usage_flat") 
+  
+  FleetEmb = Fleet %>%
+    layer_embedding(input_dim = NFleet, output_dim = 1, input_length = 1, name = "FleetEmb") %>%
+    layer_flatten(name = "Fleet_flat") 
+  
+  PcEmb = PostalCode %>%
+    layer_embedding(input_dim = NPc, output_dim = i, input_length = 1, name = "PcEmb") %>%
+    layer_flatten(name = "Pc_flat") 
+  
+  for(l_1 in 1:(length(num_neurons))){
+    for(l_2 in 1:(length(num_neurons))){
+      for(l_3 in 1:(length(num_neurons))){
+        Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
+          layer_concatenate(name = 'concate') %>%
+          layer_batch_normalization() %>%
+          layer_dense(units=as.numeric(num_neurons[l_1]), 
+                      activation="tanh", 
+                      name='hidden1')%>%
+          layer_dense(units=as.numeric(num_neurons[l_2]), 
+                      activation="tanh", 
+                      name='hidden2')%>%
+          layer_dense(units=as.numeric(num_neurons[l_3]), 
+                      activation="tanh", 
+                      name='hidden3')%>%
+          layer_dense(units=1, activation='linear', name='Network')
+        
+        Response <- list(Network, LogGAM) %>% layer_add(name='Add') %>% 
+          layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
+                      weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
+        
+        model_tune <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
+                                  outputs = c(Response))
+        
+        model_tune %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
+        
+        fit_tune <- model_tune %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
+                                       Ylearn, 
+                                       epochs = 20, 
+                                       batch_size = 1718, 
+                                       verbose = 0)
+        
+        y_test <- model_tune %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
+        pois_dev <- Poisson.Deviance(y_test, mtpl_test$nclaims)
+        print(pois_dev)
+        Tune_3 <- Tune_3 %>% add_row(emb_dim = i, 
+                                     l_1 = l_1,
+                                     l_2 = l_2, 
+                                     l_3 = l_3, 
+                                     pois_dev = pois_dev)
+      }
+    }
+  }
+}
+```
+
+```{r result3}
+Result3 <- Tune_3 %>% 
+  filter(pois_dev == min(pois_dev)) %>%
+  mutate(number_neurons1 = as.numeric(num_neurons[l_1]),
+         number_neurons2 = as.numeric(num_neurons[l_2]),
+         number_neurons3 = as.numeric(num_neurons[l_3])); Result3
+```
+
+Now, we also compare the best of both tuning procedures and find the following: 
+```{r compare1_3}
+Result1$pois_dev
+Result3$pois_dev
+```
+
+We see that the model with three hidden layers does slightly better. 
+
+As a final comparison, we look at the total number of predicted claims over the whole dataset. We will first refit the models using the optimal values of the hyperparameters. 
+```{r total}
+#### Total number of claims predicted ####
+#First retrain the models with the resulting hyperparameters
+set.seed(1997)
+
+## One layer network
+CovEmb = Coverage %>%
+  layer_embedding(input_dim = NCov, output_dim = 2, input_length = 1, name = "CovEmb") %>%
+  layer_flatten(name = "Cov_flat") 
+
+SexEmb = Sex %>%
+  layer_embedding(input_dim = NSex, output_dim = 1, input_length = 1, name = "SexEmb") %>%
+  layer_flatten(name = "Sex_flat") 
+
+FuelEmb = Fuel %>%
+  layer_embedding(input_dim = NFuel, output_dim = 1, input_length = 1, name = "FuelEmb") %>%
+  layer_flatten(name = "Fuel_flat") 
+
+UsageEmb = Usage %>%
+  layer_embedding(input_dim = NUse, output_dim = 1, input_length = 1, name = "UsageEmb") %>%
+  layer_flatten(name = "Usage_flat") 
+
+FleetEmb = Fleet %>%
+  layer_embedding(input_dim = NFleet, output_dim = 1, input_length = 1, name = "FleetEmb") %>%
+  layer_flatten(name = "Fleet_flat") 
+
+PcEmb = PostalCode %>%
+  layer_embedding(input_dim = NPc, output_dim = 1, input_length = 1, name = "PcEmb") %>%
+  layer_flatten(name = "Pc_flat") 
+
+Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
+  layer_concatenate(name = 'concate') %>%
+  layer_batch_normalization() %>%
+  layer_dense(units=15, 
+              activation="tanh", 
+              name='hidden1')%>%
+  layer_dense(units=1, activation='linear', name='Network')
+
+Response <- list(Network, LogGAM) %>% layer_add(name='Add') %>% 
+  layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
+              weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
+
+model_1 <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
+                          outputs = c(Response))
+
+model_1 %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
+
+fit_1 <- model_1 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
+                               Ylearn, 
+                               epochs = 20, 
+                               batch_size = 1718)
+
+y_pred_1 <- model_1 %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
+Poisson.Deviance(y_pred_1, mtpl_test$nclaims)
+
+#Three layer network
+Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
+  layer_concatenate(name = 'concate') %>%
+  layer_batch_normalization() %>%
+  layer_dense(units=5, 
+              activation="tanh", 
+              name='hidden1')%>%
+  layer_dense(units=15, 
+              activation="tanh", 
+              name='hidden2')%>%
+  layer_dense(units=5, 
+              activation="tanh", 
+              name='hidden3')%>%
+  layer_dense(units=1, activation='linear', name='Network')
+
+Response <- list(Network, LogGAM) %>% layer_add(name='Add') %>% 
+  layer_dense(units=1, activation=k_exp, name = 'Response', trainable=FALSE,
+              weights=list(array(1, dim=c(1,1)), array(0, dim=c(1))))
+
+model_3 <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, PostalCode, LogGAM),
+                          outputs = c(Response))
+
+model_3 %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
+
+fit_3 <- model_3 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
+                               Ylearn, 
+                               epochs = 20, 
+                               batch_size = 1718)
+
+y_pred_3 <- model_3 %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
+Poisson.Deviance(y_pred_3, mtpl_test$nclaims)
+
+# Total claims predicted
+Total_claims <- sum(mtpl_test$nclaims)
+
+Total_GAM <- sum(GAM_full %>% 
+  predict(newdata= mtpl_test, type = "response"))
+
+Total_1 <- sum(y_pred_1)
+
+Total_3 <- sum(y_pred_3)
+
+tibble(Total_claims, Total_GAM, Total_1, Total_3)
+
+```
+
+We see that the CANN's give a better picture of the total number of expected claims in the portfolio. 
+
+# Conclusion
+In this paper, we have looked a one way of including neural networks into actuarial problems. First, we saw why special care needs to be taken when doing this. We presented how Combined Actuarial Neural Networks can be implemented, and illustrated the results one a Belgian motor third party liability insurance. We saw that we got superior results compared to more classical, statistical techniques like the GAM. 
 
 # References
