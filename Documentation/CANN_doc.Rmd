@@ -351,7 +351,7 @@ We can clearly see that most claims are reported in more urbanised areas (Bruges
 Finally, we move to the modelling part. We begin by fitting a GAM model, which will be used as our base-line model. We visualise the smoothers and calculate the Poisson deviance for this model. Note that the age smoother is similar to the one whe had before. 
 
 ```{r load_data, include=FALSE}
-load("../.RData")
+load("../Data_file.RData")
 ```
 
 ```{r full_GAM, eval=FALSE}
@@ -599,12 +599,55 @@ Result3$pois_dev
 We see that the model with three hidden layers does slightly better. 
 
 As a final comparison, we look at the total number of predicted claims over the whole dataset. We will first refit the models using the optimal values of the hyperparameters. 
-```{r total}
+
+```{r finalTotal}
 #### Total number of claims predicted ####
 #First retrain the models with the resulting hyperparameters
 set.seed(1997)
 
 ## One layer network
+non_cat <- c(5, 7:9)
+n0 <- length(non_cat)
+
+Xlearn <- as.matrix(mtpl_train[,non_cat])
+Vlearn <- as.matrix(predict(GAM_full) + log(mtpl_train$expo))
+
+CovLearn <- as.matrix(as.integer(mtpl_train$coverage))-1
+NCov <- length(unique(CovLearn))
+SexLearn <- as.matrix(as.integer(mtpl_train$sex))-1
+NSex <- length(unique(SexLearn))
+FuelLearn <- as.matrix(as.integer(mtpl_train$fuel))-1
+NFuel <- length(unique(FuelLearn))
+UseLearn <- as.matrix(as.integer(mtpl_train$use))-1
+NUse <- length(unique(UseLearn))
+FleetLearn <- as.matrix(as.integer(mtpl_train$fleet))-1
+NFleet <- length(unique(FleetLearn))
+PcLearn <- as.matrix(as.integer(mtpl_train$postcode))-1
+NPc <- length(unique(PcLearn))
+
+XTest <- as.matrix(mtpl_test[,non_cat])
+VTest <- as.matrix(predict(GAM_full, newdata = mtpl_test) + log(mtpl_test$expo))
+
+CovTest <- as.matrix(as.integer(mtpl_test$coverage))-1
+SexTest <- as.matrix(as.integer(mtpl_test$sex))-1
+FuelTest <- as.matrix(as.integer(mtpl_test$fuel))-1
+UseTest <- as.matrix(as.integer(mtpl_test$use))-1
+FleetTest <- as.matrix(as.integer(mtpl_test$fleet))-1
+PcTest <- as.matrix(as.integer(mtpl_test$postcode))-1
+
+Ylearn <- as.matrix(mtpl_train$nclaims)
+
+Design <- layer_input(shape = c(n0), dtype = 'float32', name = 'Design')
+
+LogGAM <- layer_input(shape = c(1),   dtype = 'float32', name = 'LogGAM')
+
+Coverage <- layer_input(shape = c(1), dtype = 'int32', name = 'Coverage')
+Sex <- layer_input(shape = c(1), dtype = 'int32', name = 'Sex')
+Fuel <- layer_input(shape = c(1), dtype = 'int32', name = 'Fuel')
+Usage <- layer_input(shape = c(1), dtype = 'int32', name = 'Usage')
+Fleet <- layer_input(shape = c(1), dtype = 'int32', name = 'Fleet')
+PostalCode <- layer_input(shape = c(1), dtype = 'int32', name = 'PostalCode')
+
 CovEmb = Coverage %>%
   layer_embedding(input_dim = NCov, output_dim = 2, input_length = 1, name = "CovEmb") %>%
   layer_flatten(name = "Cov_flat") 
@@ -632,8 +675,8 @@ PcEmb = PostalCode %>%
 Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
   layer_concatenate(name = 'concate') %>%
   layer_batch_normalization() %>%
-  layer_dense(units=15, 
-              activation="tanh", 
+  layer_dense(units=5, 
+              activation="relu", 
               name='hidden1')%>%
   layer_dense(units=1, activation='linear', name='Network')
 
@@ -647,21 +690,21 @@ model_1 <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, Pos
 model_1 %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
 
 fit_1 <- model_1 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
-                               Ylearn, 
-                               epochs = 20, 
-                               batch_size = 1718)
+                         Ylearn, 
+                         epochs = 30,
+                         batch_size = 1718,
+                         verbose = 0)
 
 y_pred_1 <- model_1 %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
-Poisson.Deviance(y_pred_1, mtpl_test$nclaims)
 
 #Three layer network
 Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
   layer_concatenate(name = 'concate') %>%
   layer_batch_normalization() %>%
-  layer_dense(units=5, 
+  layer_dense(units=15, 
               activation="tanh", 
               name='hidden1')%>%
-  layer_dense(units=15, 
+  layer_dense(units=10, 
               activation="tanh", 
               name='hidden2')%>%
   layer_dense(units=5, 
@@ -679,12 +722,12 @@ model_3 <- keras_model(inputs = c(Design, Coverage, Sex, Fuel, Usage, Fleet, Pos
 model_3 %>% compile(optimizer = optimizer_nadam(), loss = 'poisson')
 
 fit_3 <- model_3 %>% fit(list(Xlearn, CovLearn, SexLearn, FuelLearn, UseLearn, FleetLearn, PcLearn, Vlearn),
-                               Ylearn, 
-                               epochs = 20, 
-                               batch_size = 1718)
+                         Ylearn,
+                         epochs = 30, 
+                         batch_size = 1718,
+                         verbose = 0)
 
 y_pred_3 <- model_3 %>% predict(list(XTest, CovTest, SexTest, FuelTest, UseTest, FleetTest, PcTest, VTest))
-Poisson.Deviance(y_pred_3, mtpl_test$nclaims)
 
 # Total claims predicted
 Total_claims <- sum(mtpl_test$nclaims)
@@ -696,7 +739,7 @@ Total_1 <- sum(y_pred_1)
 
 Total_3 <- sum(y_pred_3)
 
-tibble(Total_claims, Total_GAM, Total_1, Total_3)
+knitr::kable(tibble(Total_claims, Total_GAM, Total_1, Total_3))
 
 ```
 

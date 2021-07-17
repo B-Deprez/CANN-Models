@@ -431,8 +431,8 @@ PcEmb = PostalCode %>%
 Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
   layer_concatenate(name = 'concate') %>%
   layer_batch_normalization() %>%
-  layer_dense(units=15, 
-              activation="tanh", 
+  layer_dense(units=5, 
+              activation="relu", 
               name='hidden1')%>%
   layer_dense(units=1, activation='linear', name='Network')
 
@@ -457,10 +457,10 @@ Poisson.Deviance(y_pred_1, mtpl_test$nclaims)
 Network <- list(Design, CovEmb, SexEmb, FuelEmb, UsageEmb, FleetEmb, PcEmb) %>%
   layer_concatenate(name = 'concate') %>%
   layer_batch_normalization() %>%
-  layer_dense(units=5, 
+  layer_dense(units=15, 
               activation="tanh", 
               name='hidden1')%>%
-  layer_dense(units=15, 
+  layer_dense(units=10, 
               activation="tanh", 
               name='hidden2')%>%
   layer_dense(units=5, 
