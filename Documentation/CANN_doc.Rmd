@@ -354,7 +354,7 @@ Finally, we move to the modelling part. We begin by fitting a GAM model, which w
 load("../.RData")
 ```
 
-```{r full_GAM}
+```{r full_GAM, eval=FALSE}
 ## GAM
 GAM_full <- gam(nclaims ~ coverage + s(ageph) + sex + s(bm) + s(power) + 
                   s(agec) + fuel + use + fleet + postcode, 
@@ -364,7 +364,9 @@ GAM_full <- gam(nclaims ~ coverage + s(ageph) + sex + s(bm) + s(power) +
 
 par(mfrow = c(2,2))
 plot(GAM_full, scale = 0)
+```
 
+```{r GAMRES}
 # Results from the GAM are our benchmark
 y_test_fullGAM <- GAM_full %>% predict(newdata = mtpl_test, type = "response")
 Poisson.Deviance(y_test_fullGAM, mtpl_test$nclaims)
