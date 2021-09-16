@@ -53,46 +53,47 @@ CANN_fun <- function(object, newdata){
 
 model_list = list(GAM_full, model_CANN)
 
-maidrr_model_data <- model_list %>% autotune(data = df_model,
-                                             vars = c('ageph', 'sex'),
-                                             target = 'nclaims',
-                                             pred_fun = CANN_fun,
-                                             strat_vars = c('nclaims', 'expo'),
-                                             glm_par = alist(family = poisson(link = 'log'),
-                                                             offset = log(expo)),
-                                             err_fun = poi_dev,
-                                             ncores = -1)
-
-
-
-model_pd <- model_list %>% get_pd(var = "sex_ageph", 
+pd_df <- model_list %>% 
+  get_pd(var = "sex_ageph", 
                       grid = c("sex", "ageph")%>%get_grid(df_model),
                       data = df_model,
                       subsample = 1000,
                       fun = CANN_fun)
 
-library(gbm)
-data('mtpl_be')
-features <- setdiff(names(mtpl_be), c('id', 'nclaims', 'expo', 'long', 'lat'))
-set.seed(12345)
-gbm_fit <- gbm::gbm(as.formula(paste('nclaims ~',
-                                     paste(features, collapse = ' + '))),
-                    distribution = 'poisson',
-                    data = mtpl_be,
-                    n.trees = 50,
-                    interaction.depth = 3,
-                    shrinkage = 0.1)
+pd_df %>%
+  mutate(x1 = ifelse(x1 == 0, "female", "male")) %>%
+  rename(gender = x1, age = x2) %>%
+  ggplot(aes(age, y, color = gender, group = gender))+
+  geom_line()+
+  theme_bw()
 
-gbm_fun <- function(object, newdata) mean(predict(object, newdata, n.trees = object$n.trees, type = 'response'))
-gbm_fit %>% autotune(data = mtpl_be,
-                     vars = c('ageph', 'bm', 'coverage', 'fuel', 'sex', 'fleet', 'use'),
-                     target = 'nclaims',
-                     hcut = 0.75,
-                     pred_fun = gbm_fun,
-                     lambdas = as.vector(outer(seq(1, 10, 1), 10^(-6:-2))),
-                     nfolds = 5,
-                     strat_vars = c('nclaims', 'expo'),
-                     glm_par = alist(family = poisson(link = 'log'),
-                                     offset = log(expo)),
-                     err_fun = poi_dev,
-                     ncores = -1)
+pd_age <- model_list %>%
+  get_pd(var = "ageph", 
+         grid = c("ageph")%>%get_grid(df_model),
+         data = df_model,
+         subsample = 1000,
+         fun = CANN_fun)
+
+age_levels <- c(rep("[18, 19]",2),
+                rep("[20, 21]",2),
+                rep("[22, 23]",2),
+                rep("[24, 25]",2),
+                rep("[26, 28]",3),
+                rep("[29, 32]",4),
+                rep("[33, 50]",18),
+                rep("[51, 55]",5),
+                rep("[56, 60]",5),
+                rep("[61, 76]",16),
+                rep("[77, 81]",5),
+                rep("[82, 85]",4),
+                rep("[86, 90]",5),
+                rep("[91, 95]",5))
+
+final_df <- pd_age %>%
+  dplyr::select(x,y) %>%
+  rename(age = x, pd = y) %>%
+  mutate(glm = predict(output$best_surr, newdata = data.frame(ageph_=age_levels, expo = 1), type = "response"))
+
+ggplot(final_df, aes(x=age))+
+  geom_line(aes(y=glm), color = "blue")+
+  theme_bw()

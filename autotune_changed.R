@@ -159,6 +159,8 @@ slct_main <- out_main %>% dplyr::slice(1) %>% dplyr::select(!!!rlang::syms(vars)
   dplyr::select_if(~. > 1) %>% unlist(., use.names = TRUE)
 if (length(slct_main) == 0) stop('Not a single feature was selected, please try again with lower values for lambda.')
 
+slct_feat <- slct_main
+
 # Segment the data based on the selected features and optimal number of groups
 data_main <- maidrr::segmentation(fx_vars = fx_main[names(slct_main)], data = data, type = 'ngroups', values = slct_main)
 
@@ -167,6 +169,7 @@ glm_par[['formula']] <- as.formula(paste(target, '~', paste(c(1, paste0(names(sl
 opt_surro <- maidrr::surrogate(data = data_main, par_list = glm_par)
 
 # Combine results in a list and return
+out_intr = NULL
 output <- list('slct_feat' = slct_feat,
                'best_surr' = opt_surro,
                'tune_main' = out_main,
@@ -175,3 +178,5 @@ output <- list('slct_feat' = slct_feat,
 if (out_pds) output$pd_fx <- c(fx_main, fx_intr)[names(slct_feat)]
 # Output
 output
+
+
