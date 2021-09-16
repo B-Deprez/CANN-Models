@@ -76,8 +76,64 @@ data <- data %>% dplyr::sample_n(size = nrow(.), replace = FALSE) %>%
 #%#%#%#% Goes wrong here: changed code untill next "#%#%#%#%" 
 #--------------------------------------------------------------
 interactions = 'user'
+pred_fun = NULL
+fx_in = NULL
+ncores = -1
+vars_main <- vars[! grepl('_', vars)]
+if (! all(vars_main %in% names(data))) stop('Some features specified in vars can not be found in the data.')
+
+if (interactions == 'user') {
+  vars_intr <- vars[grepl('_', vars)]
+  if (! all(unique(unlist(sapply(vars_intr, function(x) strsplit(x, '_')))) %in% vars_main)) stop('Each feature that is included in an interaction should also be present as a main effect.')
+}
+
+if (interactions == 'auto') {
+  if (length(vars[grepl('_', vars)]) > 0) warning('Interactions specified in vars are ignored when interactions = "auto".')
+  vars_intr <- apply(combn(vars_main, 2), 2, function(x) paste(x, collapse = '_'))
+  if (length(fx_in[grepl('_', names(fx_in))]) > 0) warning('Interactions specified in fx_in are ignored when interactions = "auto".')
+  fx_in <- fx_in[! grepl('_', names(fx_in))]
+  if (hcut < 0 | hcut > 1) stop('The parameter hcut must lie within the range [0, 1].')
+}
 
 
+# Initialize a list to save the results and possibly fill with supplied effects
+vars <- c(vars_main, vars_intr)
+fx_vars <- setNames(vector('list', length = length(vars)), vars)
+fx_vars[names(fx_in)] <- fx_in
+
+# Iterate over the variables to get effects
+library(foreach)
+fx_vars[setdiff(vars, names(fx_in))] <- foreach::foreach (v = setdiff(vars, names(fx_in))) %do% {
+  maidrr::get_pd(mfit = mfit,
+                 var = v,
+                 grid = maidrr::get_grid(unlist(strsplit(v, '_')), data),
+                 data = data,
+                 subsample = 10000,
+                 fun = CANN_fun)
+}
+
+# switch(as.character(grepl('_', v)),
+#        'FALSE' = maidrr::get_grid(v, data),
+#        'TRUE' = tidyr::expand_grid(maidrr::get_grid(unlist(strsplit(v, '_'))[1], data), maidrr::get_grid(unlist(strsplit(v, '_'))[2], data)))
+
+# Determine which interactions to include
+if (interactions == 'auto') {
+  vars_intr <- tibble::tibble(intr = vars_intr,
+                              hstat = vars_intr %>% purrr::map_dbl(function(v) interaction_strength(fx_vars[[v]], fx_vars[vars_main]))) %>%
+    dplyr::arrange(-hstat) %>%
+    dplyr::mutate(nrank = cumsum(hstat)/sum(hstat)) %>%
+    dplyr::slice(seq_len(sum(nrank < hcut) + 1)) %>%
+    dplyr::pull(intr)
+  
+  fx_vars <- fx_vars[c(vars_main, vars_intr)]
+}
+
+# Get the pure interaction effects
+if( length(vars_intr) > 0) {
+  fx_vars[setdiff(vars_intr, names(fx_in))] <- fx_vars[setdiff(vars_intr, names(fx_in))] %>% lapply(function(fx) interaction_pd(fx, fx_vars[vars_main]))
+}
+
+fx_main <- fx_vars
 
 #--------------------------------------------------------------
 #%#%#%#%
@@ -85,10 +141,6 @@ interactions = 'user'
 lmbd_main <- maidrr::lambda_grid(fx_vars = fx_main, lambda_range = lambdas, max_ngrps = max_ngrps)
 
 # Set up a cluster and iterate over the lambda grid
-switch(as.character(ncores),
-       '-1' = doParallel::registerDoParallel(parallel::detectCores(logical = 'FALSE')),
-       '1' = foreach::registerDoSEQ(),
-       doParallel::registerDoParallel(ncores))
 out_main <- foreach::foreach (l = seq_len(nrow(lmbd_main)), .combine = rbind) %dopar% {
   # Segmentation for current lambda values
   data_segm <- maidrr::segmentation(fx_vars = fx_main, data = data, type = 'ngroups',
@@ -96,7 +148,6 @@ out_main <- foreach::foreach (l = seq_len(nrow(lmbd_main)), .combine = rbind) %d
   # Calculate the validation errors
   Kfold_cross_valid(data = data_segm, target = target, nfolds = nfolds, glm_par = glm_par, err_fun = err_fun)
 }
-doParallel::stopImplicitCluster()
 
 # Get the cross-validation error
 if (! ('matrix' %in% class(out_main) & nrow(lmbd_main) > 1)) out_main <- out_main %>% as.matrix() %>% t()
@@ -111,71 +162,9 @@ if (length(slct_main) == 0) stop('Not a single feature was selected, please try 
 # Segment the data based on the selected features and optimal number of groups
 data_main <- maidrr::segmentation(fx_vars = fx_main[names(slct_main)], data = data, type = 'ngroups', values = slct_main)
 
-
-# Return these results if no interactions are asked for
-if (hcut == -1) {
-  # Fit the optimal surrogate GLM
-  glm_par[['formula']] <- as.formula(paste(target, '~', paste(c(1, paste0(names(slct_main), '_')), collapse = ' + ')))
-  opt_surro <- maidrr::surrogate(data = data_main, par_list = glm_par)
-  
-  # Combine results in a list and return
-  output <- list('slct_feat' = slct_main,
-                 'best_surr' = opt_surro,
-                 'tune_main' = out_main,
-                 'tune_intr' = NULL)
-  # Add PD effects if asked for
-  if (out_pds) output$pd_fx <- fx_main[names(slct_main)]
-  # Output
-  return(output)
-}
-
-
-# Generate the feature effects and the lambda grid for interactions
-fx_intr <- maidrr::insights(mfit = mfit,
-                            vars = setdiff(names(slct_main), ignr_intr),
-                            data = data,
-                            interactions = 'auto',
-                            hcut = hcut,
-                            pred_fun = pred_fun,
-                            fx_in = fx_main,
-                            ncores = ncores)
-fx_intr <- fx_intr[grepl('_', names(fx_intr))]
-vars_intr <- names(fx_intr)
-lmbd_intr <- maidrr::lambda_grid(fx_vars = fx_intr, lambda_range = lambdas, max_ngrps = max_ngrps)
-
-# Set up a cluster and iterate over the lambda grid
-switch(as.character(ncores),
-       '-1' = doParallel::registerDoParallel(parallel::detectCores(logical = 'FALSE')),
-       '1' = foreach::registerDoSEQ(),
-       doParallel::registerDoParallel(ncores))
-out_intr <- foreach::foreach (l = seq_len(nrow(lmbd_intr)), .combine = rbind) %dopar% {
-  # Segmentation for current lambda values
-  data_segm <- maidrr::segmentation(fx_vars = fx_intr, data = data_main, type = 'ngroups',
-                                    values =  unlist(dplyr::select(dplyr::slice(lmbd_intr, l), vars_intr), use.names = TRUE))
-  # Calculate the validation errors
-  Kfold_cross_valid(data = data_segm, target = target, nfolds = nfolds, glm_par = glm_par, err_fun = err_fun, fixed_terms = paste0(names(slct_main), '_'))
-}
-doParallel::stopImplicitCluster()
-
-# Get the cross-validation error
-if (! ('matrix' %in% class(out_intr) & nrow(lmbd_intr) > 1)) out_intr <- out_intr %>% as.matrix() %>% t()
-out_intr <- dplyr::bind_cols(lmbd_intr, out_intr %>% as.data.frame %>% setNames(seq_len(nfolds))) %>%
-  dplyr::mutate(cv_err = rowMeans(dplyr::select(., as.character(seq_len(nfolds))), na.rm = TRUE)) %>% dplyr::arrange(cv_err)
-if (all(out_intr$cv_err == Inf)) warning('All interaction combinations lead to rank-deficient GLM fits, try adding larger values for lambda to the grid.')
-
-# Get the selected features
-slct_intr <- out_intr %>% dplyr::slice(1) %>% dplyr::select(!!!rlang::syms(vars_intr)) %>%
-  dplyr::select_if(~. > 1) %>% unlist(., use.names = TRUE)
-
-# Check if interactions improve the fit with only main effects
-if (min(out_intr$cv_err) < min(out_main$cv_err)) slct_feat <- c(slct_main, slct_intr) else slct_feat <- slct_main
-
-# Segment the data based on the selected features and optimal number of groups
-data_segm <- maidrr::segmentation(fx_vars = c(fx_main, fx_intr)[names(slct_feat)], data = data, type = 'ngroups', values = slct_feat)
-
 # Fit the optimal surrogate GLM
 glm_par[['formula']] <- as.formula(paste(target, '~', paste(c(1, paste0(names(slct_feat), '_')), collapse = ' + ')))
-opt_surro <- maidrr::surrogate(data = data_segm, par_list = glm_par)
+opt_surro <- maidrr::surrogate(data = data_main, par_list = glm_par)
 
 # Combine results in a list and return
 output <- list('slct_feat' = slct_feat,
@@ -185,4 +174,4 @@ output <- list('slct_feat' = slct_feat,
 # Add PD effects if asked for
 if (out_pds) output$pd_fx <- c(fx_main, fx_intr)[names(slct_feat)]
 # Output
-return(output)
+output
