@@ -39,4 +39,6 @@ gbm_maidrr <- gbm_fit %>% autotune(data = df_iris,
                      ncores = -1)
 
 gbm_maidrr
+
 surr_model <- gbm_maidrr$best_surr
+head(surr_model$data)
