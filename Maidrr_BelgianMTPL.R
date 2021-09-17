@@ -53,7 +53,7 @@ CANN_fun <- function(object, newdata){
 
 model_list = list(GAM_full, model_CANN)
 
-pd_df <- model_list %>% 
+pd_sa <- model_list %>% 
   get_pd(var = "sex_ageph", 
                       grid = c("sex", "ageph")%>%get_grid(df_model),
                       data = df_model,
